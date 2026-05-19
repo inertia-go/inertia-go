@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -189,6 +190,20 @@ func (i *Inertia) writeHTML(w http.ResponseWriter, r *http.Request, page PageObj
 		URL:         page.URL,
 		Version:     page.Version,
 		PageJSON:    template.JS(body),
+	}
+	if i.cfg.SSR != nil {
+		head, ssrBody, err := i.cfg.SSR.Render(r.Context(), json.RawMessage(body))
+		switch {
+		case err == nil:
+			data.InertiaHead = template.HTML(strings.Join(head, "\n"))
+			data.InertiaBody = template.HTML(ssrBody)
+		case i.cfg.SSRRequired:
+			i.cfg.ErrorHandler(w, r, fmt.Errorf("%w: %v", ErrSSRUnavailable, err))
+			return
+		default:
+			i.logger.Warn("inertia: ssr render failed; falling back to CSR",
+				"err", err, "url", r.URL.Path)
+		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := i.renderRoot(w, data); err != nil {

@@ -1,7 +1,11 @@
 package inertia
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,6 +190,149 @@ func TestRender_InitialHTML_DataPageIsValidJSONAfterHTMLParse(t *testing.T) {
 	}
 	if page.Component != "Users/Index" {
 		t.Errorf("component: %q", page.Component)
+	}
+}
+
+// stubSSRClient is a test-only SSRClient with canned returns and an
+// invocation counter for skip-check tests.
+type stubSSRClient struct {
+	head      []string
+	body      string
+	err       error
+	callCount int
+	lastPage  json.RawMessage
+}
+
+func (s *stubSSRClient) Render(_ context.Context, page json.RawMessage) ([]string, string, error) {
+	s.callCount++
+	s.lastPage = page
+	return s.head, s.body, s.err
+}
+
+func TestRender_SSREnabled_InjectsHeadAndBody(t *testing.T) {
+	stub := &stubSSRClient{
+		head: []string{"<title>SSR Title</title>", `<meta name="x" content="y">`},
+		body: `<div id="app">SSR-rendered</div>`,
+	}
+	i, _ := New(Config{Session: stubSession{}, SSR: stub})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/users", nil)
+	i.Render(w, r, "Users/Index", Props{"foo": "bar"})
+
+	if stub.callCount != 1 {
+		t.Errorf("SSR called %d times, want 1", stub.callCount)
+	}
+	out := w.Body.String()
+	if !strings.Contains(out, "<title>SSR Title</title>") {
+		t.Errorf("head fragment missing: %s", out)
+	}
+	if !strings.Contains(out, `<meta name="x" content="y">`) {
+		t.Errorf("second head fragment missing: %s", out)
+	}
+	if !strings.Contains(out, `<div id="app">SSR-rendered</div>`) {
+		t.Errorf("SSR body missing: %s", out)
+	}
+	if strings.Contains(out, `data-page=`) {
+		t.Errorf("CSR fallback body should not be present when SSR succeeded: %s", out)
+	}
+}
+
+func TestRender_SSRHeadJoinedOnNewline(t *testing.T) {
+	stub := &stubSSRClient{
+		head: []string{"a", "b"},
+		body: `<div id="app"></div>`,
+	}
+	i, _ := New(Config{Session: stubSession{}, SSR: stub})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	i.Render(w, r, "X", Props{})
+
+	if !strings.Contains(w.Body.String(), "a\nb") {
+		t.Errorf("head fragments should be newline-joined: %s", w.Body.String())
+	}
+}
+
+func TestRender_SSRFails_FailSoft_FallsBackToCSR(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	stub := &stubSSRClient{err: errors.New("connection refused")}
+	i, _ := New(Config{Session: stubSession{}, SSR: stub, Logger: logger})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	i.Render(w, r, "Dashboard", Props{})
+
+	out := w.Body.String()
+	if !strings.Contains(out, `data-page=`) {
+		t.Errorf("expected CSR fallback (data-page attribute), got: %s", out)
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	log := logBuf.String()
+	if !strings.Contains(log, "ssr render failed") {
+		t.Errorf("expected SSR warn log, got: %s", log)
+	}
+	if !strings.Contains(log, "/dashboard") {
+		t.Errorf("expected URL in log, got: %s", log)
+	}
+}
+
+func TestRender_SSRFails_SSRRequired_RoutesToErrorHandler(t *testing.T) {
+	stub := &stubSSRClient{err: errors.New("oops")}
+	var handlerErr error
+	handlerCalls := 0
+	i, _ := New(Config{
+		Session:     stubSession{},
+		SSR:         stub,
+		SSRRequired: true,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			handlerCalls++
+			handlerErr = err
+			w.WriteHeader(http.StatusInternalServerError)
+		},
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	i.Render(w, r, "X", Props{})
+
+	if handlerCalls != 1 {
+		t.Fatalf("ErrorHandler called %d times, want 1", handlerCalls)
+	}
+	if !errors.Is(handlerErr, ErrSSRUnavailable) {
+		t.Errorf("error should wrap ErrSSRUnavailable, got %v", handlerErr)
+	}
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `data-page=`) {
+		t.Errorf("CSR fallback should not be rendered in fail-hard mode: %s", w.Body.String())
+	}
+}
+
+func TestRender_InertiaJSON_SkipsSSR(t *testing.T) {
+	stub := &stubSSRClient{
+		head: []string{"<title>X</title>"},
+		body: `<div>SSR</div>`,
+	}
+	i, _ := New(Config{Session: stubSession{}, SSR: stub})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Inertia", "true")
+	// Run through Middleware so FromRequest populates IsInertia=true.
+	i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "X", Props{})
+	})).ServeHTTP(w, r)
+
+	if stub.callCount != 0 {
+		t.Errorf("SSR should not be called for Inertia XHR; got %d calls", stub.callCount)
+	}
+	if w.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("expected JSON response, got %q", w.Header().Get("Content-Type"))
 	}
 }
 
