@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -138,6 +139,124 @@ func (m *Manifest) Asset(entry string) string {
 		return entry
 	}
 	return m.base + e.File
+}
+
+// Tag returns the HTML required to load a manifest entry in the current
+// mode.
+//
+// In dev mode the output is two <script type="module"> tags: the
+// @vite/client runtime plus the entry itself. Vite's HMR runtime handles
+// CSS injection, so no stylesheet links are emitted.
+//
+// In prod mode the output is a <script> for the entry's hashed file,
+// <link rel="modulepreload"> for every static import (recursively), and
+// <link rel="stylesheet"> for every CSS file referenced anywhere in the
+// import chain. Each URL appears at most once.
+//
+// Missing entries (prod mode only) emit an HTML comment placeholder and
+// log a one-time slog.Warn.
+func (m *Manifest) Tag(entry string) template.HTML {
+	if m.isDev {
+		return m.devTag(entry)
+	}
+	return m.prodTag(entry)
+}
+
+func (m *Manifest) devTag(entry string) template.HTML {
+	var b strings.Builder
+	b.WriteString(`<script type="module" src="`)
+	b.WriteString(m.base)
+	b.WriteString(`/@vite/client"></script>`)
+	b.WriteString("\n")
+	b.WriteString(`<script type="module" src="`)
+	b.WriteString(m.base)
+	b.WriteByte('/')
+	b.WriteString(entry)
+	b.WriteString(`"></script>`)
+	return template.HTML(b.String())
+}
+
+func (m *Manifest) prodTag(entry string) template.HTML {
+	root, ok := m.entries[entry]
+	if !ok {
+		m.logMissing(entry)
+		return template.HTML(fmt.Sprintf("<!-- vite: entry %q not found in manifest -->", entry))
+	}
+
+	cssOrdered, preloadOrdered := m.collectDeps(entry)
+
+	mainURL := m.base + root.File
+
+	// Exclude the main file from the preload set.
+	filteredPreload := make([]string, 0, len(preloadOrdered))
+	for _, p := range preloadOrdered {
+		if p != mainURL {
+			filteredPreload = append(filteredPreload, p)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(`<script type="module" src="`)
+	b.WriteString(mainURL)
+	b.WriteString(`"></script>`)
+	for _, p := range filteredPreload {
+		b.WriteString("\n")
+		b.WriteString(`<link rel="modulepreload" href="`)
+		b.WriteString(p)
+		b.WriteString(`" />`)
+	}
+	for _, c := range cssOrdered {
+		b.WriteString("\n")
+		b.WriteString(`<link rel="stylesheet" href="`)
+		b.WriteString(c)
+		b.WriteString(`" />`)
+	}
+	return template.HTML(b.String())
+}
+
+// collectDeps walks the static-import graph rooted at name and returns
+// (cssURLs, preloadURLs) in insertion order, each with duplicates removed.
+// Missing entries are silently skipped (the caller may have already
+// logged for the root via logMissing).
+func (m *Manifest) collectDeps(root string) (css, preload []string) {
+	visited := make(map[string]struct{})
+	cssSeen := make(map[string]struct{})
+	preloadSeen := make(map[string]struct{})
+
+	var walk func(name string)
+	walk = func(name string) {
+		if _, ok := visited[name]; ok {
+			return
+		}
+		visited[name] = struct{}{}
+		e, ok := m.entries[name]
+		if !ok {
+			return
+		}
+		for _, c := range e.CSS {
+			url := m.base + c
+			if _, ok := cssSeen[url]; ok {
+				continue
+			}
+			cssSeen[url] = struct{}{}
+			css = append(css, url)
+		}
+		for _, imp := range e.Imports {
+			walk(imp)
+			impEntry, ok := m.entries[imp]
+			if !ok || impEntry.File == "" {
+				continue
+			}
+			url := m.base + impEntry.File
+			if _, ok := preloadSeen[url]; ok {
+				continue
+			}
+			preloadSeen[url] = struct{}{}
+			preload = append(preload, url)
+		}
+	}
+	walk(root)
+	return css, preload
 }
 
 // logMissing emits a slog.Warn the first time entry is observed missing.

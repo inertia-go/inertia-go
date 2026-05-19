@@ -217,3 +217,140 @@ func newProdManifest(t *testing.T, entries map[string]Entry) *Manifest {
 	m.logger.Store(slog.Default())
 	return m
 }
+
+func TestTag_DevMode_EmitsViteClientAndEntry(t *testing.T) {
+	m := Dev("http://localhost:5173")
+	got := string(m.Tag("resources/js/app.tsx"))
+
+	wantClient := `<script type="module" src="http://localhost:5173/@vite/client"></script>`
+	wantEntry := `<script type="module" src="http://localhost:5173/resources/js/app.tsx"></script>`
+
+	if !strings.Contains(got, wantClient) {
+		t.Errorf("missing @vite/client tag in %q", got)
+	}
+	if !strings.Contains(got, wantEntry) {
+		t.Errorf("missing entry tag in %q", got)
+	}
+}
+
+func TestTag_DevMode_BaseURLTrailingSlashStripped(t *testing.T) {
+	m := Dev("http://localhost:5173/")
+	got := string(m.Tag("resources/js/app.tsx"))
+	if strings.Contains(got, "http://localhost:5173//") {
+		t.Errorf("double slash leaked into output: %q", got)
+	}
+}
+
+func TestTag_DevMode_NoCSSEmitted(t *testing.T) {
+	m := Dev("http://localhost:5173")
+	got := string(m.Tag("resources/js/app.tsx"))
+	if strings.Contains(got, "<link rel=\"stylesheet\"") {
+		t.Errorf("dev mode should not emit stylesheet links: %q", got)
+	}
+}
+
+func TestTag_ProdMode_OnlyMainEntry(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"resources/js/app.tsx": {File: "assets/app-Hash.js", IsEntry: true},
+	})
+	got := string(m.Tag("resources/js/app.tsx"))
+
+	if !strings.Contains(got, `<script type="module" src="/assets/app-Hash.js"></script>`) {
+		t.Errorf("missing main script: %q", got)
+	}
+	if strings.Contains(got, "modulepreload") {
+		t.Errorf("entry without imports should not emit modulepreload: %q", got)
+	}
+	if strings.Contains(got, "stylesheet") {
+		t.Errorf("entry without css should not emit stylesheet: %q", got)
+	}
+}
+
+func TestTag_ProdMode_WithImports_EmitsModulepreload(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"resources/js/app.tsx": {
+			File:    "assets/app-Hash.js",
+			IsEntry: true,
+			Imports: []string{"_shared.js"},
+		},
+		"_shared.js": {File: "assets/shared-Hash.js"},
+	})
+	got := string(m.Tag("resources/js/app.tsx"))
+	if !strings.Contains(got, `<script type="module" src="/assets/app-Hash.js"></script>`) {
+		t.Errorf("missing main script: %q", got)
+	}
+	if !strings.Contains(got, `<link rel="modulepreload" href="/assets/shared-Hash.js" />`) {
+		t.Errorf("missing modulepreload: %q", got)
+	}
+}
+
+func TestTag_ProdMode_WithCSS_EmitsStylesheet(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"resources/js/app.tsx": {
+			File:    "assets/app-Hash.js",
+			IsEntry: true,
+			CSS:     []string{"assets/app-Hash.css"},
+		},
+	})
+	got := string(m.Tag("resources/js/app.tsx"))
+	if !strings.Contains(got, `<link rel="stylesheet" href="/assets/app-Hash.css" />`) {
+		t.Errorf("missing stylesheet: %q", got)
+	}
+}
+
+func TestTag_ProdMode_RecursiveImports_NoDuplicates(t *testing.T) {
+	// app imports A and B; both A and B import _common. _common must
+	// appear only once in the output.
+	m := newProdManifest(t, map[string]Entry{
+		"app.ts":     {File: "assets/app.js", IsEntry: true, Imports: []string{"_a.js", "_b.js"}},
+		"_a.js":      {File: "assets/a.js", Imports: []string{"_common.js"}},
+		"_b.js":      {File: "assets/b.js", Imports: []string{"_common.js"}},
+		"_common.js": {File: "assets/common.js"},
+	})
+	got := string(m.Tag("app.ts"))
+	count := strings.Count(got, "/assets/common.js")
+	if count != 1 {
+		t.Errorf("expected /assets/common.js to appear exactly once, got %d in %q", count, got)
+	}
+}
+
+func TestTag_ProdMode_MainFileNotInPreload(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"app.ts": {File: "assets/app.js", IsEntry: true, Imports: []string{"_x.js"}},
+		"_x.js":  {File: "assets/x.js"},
+	})
+	got := string(m.Tag("app.ts"))
+	// The main file appears in a <script> tag — but must NOT also appear
+	// as modulepreload.
+	if strings.Contains(got, `<link rel="modulepreload" href="/assets/app.js"`) {
+		t.Errorf("main file should not be in modulepreload: %q", got)
+	}
+}
+
+func TestTag_ProdMode_RecursiveImports_CollectCSSFromImports(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"app.ts":  {File: "assets/app.js", IsEntry: true, Imports: []string{"_dep.js"}},
+		"_dep.js": {File: "assets/dep.js", CSS: []string{"assets/dep.css"}},
+	})
+	got := string(m.Tag("app.ts"))
+	if !strings.Contains(got, `<link rel="stylesheet" href="/assets/dep.css" />`) {
+		t.Errorf("CSS from imported chunk should be collected: %q", got)
+	}
+}
+
+func TestTag_MissingEntry_ReturnsCommentAndLogsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	m := newProdManifest(t, map[string]Entry{})
+	m.SetLogger(logger)
+
+	got := string(m.Tag("typo.tsx"))
+	wantComment := `<!-- vite: entry "typo.tsx" not found in manifest -->`
+	if got != wantComment {
+		t.Errorf("got %q, want %q", got, wantComment)
+	}
+	_ = m.Tag("typo.tsx") // second call must be silent
+	if strings.Count(buf.String(), "typo.tsx") != 1 {
+		t.Errorf("log-once violated: %s", buf.String())
+	}
+}
