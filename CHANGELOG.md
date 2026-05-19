@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] — 2026-05-19
+
+### Added
+
+- `ssr` sub-package providing `HTTPClient` (with `NewHTTP` constructor,
+  `Render`, `Ping` methods) that speaks the Inertia.js SSR HTTP
+  protocol. Stdlib-only, no external dependencies.
+- Main package: `SSRClient` interface (parallel to `ViteHelper` /
+  `SessionStore`). Returns stdlib types only — sub-package does not
+  import the main package.
+- `writeHTML` invokes `Config.SSR.Render` for the initial HTML
+  response when configured, injecting head fragments and body into
+  `RootData.InertiaHead` / `InertiaBody`. Inertia XHR requests skip
+  SSR. Default behaviour on SSR error: log a warning and fall back to
+  CSR. With `Config.SSRRequired=true`, errors route through
+  `Config.ErrorHandler` wrapped as `ErrSSRUnavailable`.
+
+### Changed
+
+- `Config.SSR` type from `any` to `SSRClient`. v0.1.0 and v0.2.0 docs
+  declared the field reserved and ignored at runtime, so no working
+  user code is affected.
+- `Config.SSRRequired` documentation activated: the field's behavior
+  is now wired through `writeHTML`.
+
 ## [0.2.0] — 2026-05-19
 
 ### Added
