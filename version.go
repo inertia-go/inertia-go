@@ -22,11 +22,14 @@ func (i *Inertia) currentVersion(r *http.Request) string {
 }
 
 // fsVersion computes a stable hash over the files in VersionFromFS.
-// It reads each file's full contents so that files with identical paths and
-// sizes but different data produce different versions. For typical Vite asset
-// trees (dozens of files, all well under 1 MB total) the in-memory read is
-// negligible. The computed hash is cached for the lifetime of the *Inertia
-// value via fsVerOnce so it is computed at most once per instance.
+// The hash incorporates each file's path and full content, providing a
+// strong fingerprint suitable for asset versioning. The result is cached
+// per *Inertia instance via sync.Once, so subsequent requests are free.
+//
+// File-system errors (WalkDir or ReadFile failures) are intentionally
+// swallowed: version computation must not fail a request. A partial scan
+// produces a deterministic-but-possibly-stale fingerprint — restart the
+// process to force a fresh hash.
 func (i *Inertia) fsVersion() string {
 	i.fsVerOnce.Do(func() {
 		h := sha256.New()
