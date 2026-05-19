@@ -13,7 +13,16 @@
 // build.
 package vite
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"strings"
+	"sync"
+)
 
 // ErrManifestNotFound is returned by Load when the manifest file is absent.
 var ErrManifestNotFound = errors.New("vite: manifest file not found")
@@ -31,4 +40,76 @@ type Entry struct {
 	IsDynamicEntry bool     `json:"isDynamicEntry,omitempty"`
 	Imports        []string `json:"imports,omitempty"`
 	DynamicImports []string `json:"dynamicImports,omitempty"`
+}
+
+// Manifest holds a parsed Vite manifest plus mode metadata. After
+// construction it is read-only (apart from SetLogger and the internal
+// log-once map) and safe for concurrent use.
+type Manifest struct {
+	entries map[string]Entry
+	base    string // prod: "/" ; dev: stripped trailing-slash baseURL
+	isDev   bool
+
+	warned sync.Map // entry name → struct{} for log-once
+	logger *slog.Logger
+}
+
+// Load reads and parses a Vite manifest from path.
+// Returns ErrManifestNotFound when the file does not exist; wraps
+// JSON parse errors with "vite: parse manifest: ..." prefix.
+func Load(path string) (*Manifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", ErrManifestNotFound, path)
+		}
+		return nil, err
+	}
+	var entries map[string]Entry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("vite: parse manifest: %w", err)
+	}
+	return &Manifest{
+		entries: entries,
+		base:    "/",
+		isDev:   false,
+		logger:  slog.Default(),
+	}, nil
+}
+
+// MustLoad is like Load but panics on any error. Use it during application
+// startup where a missing manifest is unrecoverable.
+func MustLoad(path string) *Manifest {
+	m, err := Load(path)
+	if err != nil {
+		panic(err)
+	}
+	return m
+}
+
+// Dev constructs a Manifest pointing at a running Vite dev server.
+// baseURL must include the scheme + host + optional base path (e.g.
+// "http://localhost:5173" or "http://localhost:5173/build"). A trailing
+// slash is removed automatically.
+func Dev(baseURL string) *Manifest {
+	return &Manifest{
+		base:   strings.TrimRight(baseURL, "/"),
+		isDev:  true,
+		logger: slog.Default(),
+	}
+}
+
+// Entry returns the manifest entry for name. The second return value is
+// false when the entry is absent. This is a low-level data accessor; for
+// HTML output use Tag / Asset / CSS / ReactRefresh.
+func (m *Manifest) Entry(name string) (Entry, bool) {
+	e, ok := m.entries[name]
+	return e, ok
+}
+
+// SetLogger replaces the slog.Logger used for missing-entry warnings.
+// Call before exposing the manifest to handlers; not safe for concurrent
+// modification.
+func (m *Manifest) SetLogger(l *slog.Logger) {
+	m.logger = l
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -59,5 +61,81 @@ func TestErrManifestNotFound_IsExported(t *testing.T) {
 	wrapped := fmt.Errorf("loading manifest: %w", ErrManifestNotFound)
 	if !errors.Is(wrapped, ErrManifestNotFound) {
 		t.Fatal("wrapped error should unwrap to ErrManifestNotFound")
+	}
+}
+
+func TestLoad_ValidJSON(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "manifest.json")
+	body := `{
+		"resources/js/app.ts": {
+			"file": "assets/app-Hash.js",
+			"isEntry": true
+		}
+	}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m == nil {
+		t.Fatal("Load returned nil manifest")
+	}
+	e, ok := m.Entry("resources/js/app.ts")
+	if !ok {
+		t.Fatal("entry should be present")
+	}
+	if e.File != "assets/app-Hash.js" {
+		t.Errorf("File: %q", e.File)
+	}
+}
+
+func TestLoad_FileNotFound_ReturnsErrManifestNotFound(t *testing.T) {
+	_, err := Load("/nonexistent/manifest.json")
+	if !errors.Is(err, ErrManifestNotFound) {
+		t.Fatalf("expected ErrManifestNotFound, got %v", err)
+	}
+}
+
+func TestLoad_MalformedJSON_ReturnsWrappedError(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "manifest.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+	if errors.Is(err, ErrManifestNotFound) {
+		t.Fatalf("malformed JSON should not match ErrManifestNotFound, got %v", err)
+	}
+}
+
+func TestMustLoad_PanicsOnError(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = MustLoad("/nonexistent/manifest.json")
+}
+
+func TestDev_Constructs(t *testing.T) {
+	m := Dev("http://localhost:5173")
+	if m == nil {
+		t.Fatal("Dev returned nil")
+	}
+}
+
+func TestDev_TrimsTrailingSlash(t *testing.T) {
+	// We assert the user-observable behavior via Asset later; for now
+	// just construct two equivalent Manifests and rely on Asset tests.
+	m1 := Dev("http://localhost:5173")
+	m2 := Dev("http://localhost:5173/")
+	if m1 == nil || m2 == nil {
+		t.Fatal("Dev returned nil")
 	}
 }
