@@ -1,0 +1,15 @@
+{
+  "_shared-vue-Bgf4jPYC.js": {
+    "file": "assets/shared-vue-Bgf4jPYC.js",
+    "name": "vue",
+    "css": ["assets/shared-vue-Df3kp9.css"]
+  },
+  "resources/js/app.ts": {
+    "src": "resources/js/app.ts",
+    "name": "app",
+    "file": "assets/app-DvPpZ7K3.js",
+    "isEntry": true,
+    "imports": ["_shared-vue-Bgf4jPYC.js"],
+    "css": ["assets/app-CKdMlqEs.css"]
+  }
+}
