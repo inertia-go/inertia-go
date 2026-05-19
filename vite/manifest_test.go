@@ -239,6 +239,10 @@ func TestTag_DevMode_BaseURLTrailingSlashStripped(t *testing.T) {
 	if strings.Contains(got, "http://localhost:5173//") {
 		t.Errorf("double slash leaked into output: %q", got)
 	}
+	wantEntry := `<script type="module" src="http://localhost:5173/resources/js/app.tsx"></script>`
+	if !strings.Contains(got, wantEntry) {
+		t.Errorf("missing entry tag with single slash: %q", got)
+	}
 }
 
 func TestTag_DevMode_NoCSSEmitted(t *testing.T) {
@@ -352,5 +356,34 @@ func TestTag_MissingEntry_ReturnsCommentAndLogsOnce(t *testing.T) {
 	_ = m.Tag("typo.tsx") // second call must be silent
 	if strings.Count(buf.String(), "typo.tsx") != 1 {
 		t.Errorf("log-once violated: %s", buf.String())
+	}
+}
+
+func TestTag_ProdMode_EmptyFile_TreatedAsMissing(t *testing.T) {
+	// A manifest entry that lacks the "file" field (e.g. some dynamic-only
+	// chunks in malformed manifests) should be treated as a missing entry,
+	// not emit a <script src="/"></script>.
+	m := newProdManifest(t, map[string]Entry{
+		"resources/js/dynamic.ts": {IsDynamicEntry: true},
+	})
+	got := string(m.Tag("resources/js/dynamic.ts"))
+	if strings.Contains(got, `<script type="module" src="/">`) {
+		t.Errorf("empty File should not yield root-pointing script: %q", got)
+	}
+	if !strings.Contains(got, "not found in manifest") {
+		t.Errorf("expected missing-entry comment, got %q", got)
+	}
+}
+
+func TestTag_MissingEntry_HTMLEscapesEntryName(t *testing.T) {
+	// If an entry name contains characters that would break out of an HTML
+	// comment (or just look ugly), they must be HTML-escaped.
+	m := newProdManifest(t, map[string]Entry{})
+	got := string(m.Tag(`app--><script>alert(1)</script>`))
+	if strings.Contains(got, "<script>alert(1)</script>") {
+		t.Errorf("entry name was not HTML-escaped: %q", got)
+	}
+	if !strings.Contains(got, "&lt;script&gt;") {
+		t.Errorf("expected HTML-escaped angle brackets, got %q", got)
 	}
 }

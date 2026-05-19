@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -148,13 +149,18 @@ func (m *Manifest) Asset(entry string) string {
 // @vite/client runtime plus the entry itself. Vite's HMR runtime handles
 // CSS injection, so no stylesheet links are emitted.
 //
-// In prod mode the output is a <script> for the entry's hashed file,
-// <link rel="modulepreload"> for every static import (recursively), and
-// <link rel="stylesheet"> for every CSS file referenced anywhere in the
-// import chain. Each URL appears at most once.
+// In prod mode the output is a <script type="module"> for the entry's
+// hashed file, <link rel="modulepreload"> for every static import
+// (recursively), and <link rel="stylesheet"> for every CSS file
+// referenced anywhere in the import chain. Each URL appears at most once.
 //
 // Missing entries (prod mode only) emit an HTML comment placeholder and
 // log a one-time slog.Warn.
+//
+// The entry argument must be a developer-controlled constant (typically
+// a literal in your root template, e.g. {{ vite "resources/js/app.tsx" }}).
+// Tag returns template.HTML, which html/template does not auto-escape, so
+// passing attacker-controlled input would risk HTML injection.
 func (m *Manifest) Tag(entry string) template.HTML {
 	if m.isDev {
 		return m.devTag(entry)
@@ -178,9 +184,9 @@ func (m *Manifest) devTag(entry string) template.HTML {
 
 func (m *Manifest) prodTag(entry string) template.HTML {
 	root, ok := m.entries[entry]
-	if !ok {
+	if !ok || root.File == "" {
 		m.logMissing(entry)
-		return template.HTML(fmt.Sprintf("<!-- vite: entry %q not found in manifest -->", entry))
+		return template.HTML(`<!-- vite: entry "` + html.EscapeString(entry) + `" not found in manifest -->`)
 	}
 
 	cssOrdered, preloadOrdered := m.collectDeps(entry)
@@ -214,7 +220,7 @@ func (m *Manifest) prodTag(entry string) template.HTML {
 	return template.HTML(b.String())
 }
 
-// collectDeps walks the static-import graph rooted at name and returns
+// collectDeps walks the static-import graph rooted at root and returns
 // (cssURLs, preloadURLs) in insertion order, each with duplicates removed.
 // Missing entries are silently skipped (the caller may have already
 // logged for the root via logMissing).
