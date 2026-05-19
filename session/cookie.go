@@ -30,9 +30,11 @@ type CookieOptions struct {
 	Path string
 	// Domain is optional.
 	Domain string
-	// Secure defaults to true.
+	// Secure controls the cookie's Secure flag. Defaults to false so that
+	// local HTTP development works out of the box; set true in production.
 	Secure bool
-	// HTTPOnly defaults to true.
+	// HTTPOnly controls the cookie's HttpOnly flag. Defaults to false; set
+	// true in production unless the cookie must be readable from JavaScript.
 	HTTPOnly bool
 	// SameSite defaults to http.SameSiteLaxMode.
 	SameSite http.SameSite
@@ -77,7 +79,7 @@ func NewCookie(opts CookieOptions) (*CookieStore, error) {
 	}
 
 	aeads := make([]cipher.AEAD, 0, len(opts.Keys))
-	for i, k := range opts.Keys {
+	for _, k := range opts.Keys {
 		if len(k) != 32 {
 			return nil, errors.New("session: each key must be 32 bytes")
 		}
@@ -89,7 +91,6 @@ func NewCookie(opts CookieOptions) (*CookieStore, error) {
 		if err != nil {
 			return nil, err
 		}
-		_ = i
 		aeads = append(aeads, a)
 	}
 	return &CookieStore{opts: opts, aead: aeads}, nil

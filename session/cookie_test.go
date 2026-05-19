@@ -108,3 +108,46 @@ func TestCookieStore_OversizePayloadReturnsError(t *testing.T) {
 		t.Fatalf("expected ErrCookieTooLarge, got %v", err)
 	}
 }
+
+func TestNewCookie_RequiresKeys(t *testing.T) {
+	if _, err := NewCookie(CookieOptions{}); err == nil {
+		t.Fatal("expected error when Keys is empty")
+	}
+}
+
+func TestNewCookie_RejectsWrongKeySize(t *testing.T) {
+	short := make([]byte, 16)
+	if _, err := NewCookie(CookieOptions{Keys: [][]byte{short}}); err == nil {
+		t.Fatal("expected error for non-32-byte key")
+	}
+}
+
+func TestCookieStore_TakeAllBagsIssuesDeleteCookie(t *testing.T) {
+	s := newCookieStore(t)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	if err := s.FlashErrors(w, r, "default", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("FlashErrors: %v", err)
+	}
+
+	// Carry the cookie into the next request.
+	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	for _, c := range w.Result().Cookies() {
+		r2.AddCookie(c)
+	}
+
+	// Drain the only bag; the response should issue a delete cookie
+	// (MaxAge < 0) because the payload becomes empty.
+	w2 := httptest.NewRecorder()
+	if _, err := s.TakeErrors(w2, r2, "default"); err != nil {
+		t.Fatalf("TakeErrors: %v", err)
+	}
+	cookies := w2.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected a Set-Cookie header on drain")
+	}
+	if cookies[0].MaxAge >= 0 {
+		t.Errorf("expected delete cookie (MaxAge < 0), got MaxAge=%d", cookies[0].MaxAge)
+	}
+}
