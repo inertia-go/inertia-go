@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -29,6 +30,22 @@ func NewMemory() *MemoryStore {
 func (m *MemoryStore) sessionID(w http.ResponseWriter, r *http.Request) string {
 	if c, err := r.Cookie(memorySessionCookie); err == nil && c.Value != "" {
 		return c.Value
+	}
+	// Check whether a session cookie was already set on the response writer
+	// during a previous call within the same request (e.g. multiple
+	// FlashErrors / FlashMessage calls in persistCollectors). This prevents
+	// each call from creating a separate session entry.
+	for _, raw := range w.Header()["Set-Cookie"] {
+		// http.SetCookie formats as "name=value; ..."
+		if strings.HasPrefix(raw, memorySessionCookie+"=") {
+			val := strings.TrimPrefix(raw, memorySessionCookie+"=")
+			if semi := strings.IndexByte(val, ';'); semi >= 0 {
+				val = val[:semi]
+			}
+			if val != "" {
+				return val
+			}
+		}
 	}
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
