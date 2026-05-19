@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // ErrManifestNotFound is returned by Load when the manifest file is absent.
@@ -43,15 +44,16 @@ type Entry struct {
 }
 
 // Manifest holds a parsed Vite manifest plus mode metadata. After
-// construction it is read-only (apart from SetLogger and the internal
-// log-once map) and safe for concurrent use.
+// construction the entries and base are immutable and safe for concurrent
+// reads. SetLogger may be called at any time and is safe to interleave
+// with concurrent log writes; in practice it should run once at startup.
 type Manifest struct {
 	entries map[string]Entry
 	base    string // prod: "/" ; dev: stripped trailing-slash baseURL
 	isDev   bool
 
 	warned sync.Map // entry name → struct{} for log-once
-	logger *slog.Logger
+	logger atomic.Pointer[slog.Logger]
 }
 
 // Load reads and parses a Vite manifest from path.
@@ -69,12 +71,13 @@ func Load(path string) (*Manifest, error) {
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, fmt.Errorf("vite: parse manifest: %w", err)
 	}
-	return &Manifest{
+	m := &Manifest{
 		entries: entries,
 		base:    "/",
 		isDev:   false,
-		logger:  slog.Default(),
-	}, nil
+	}
+	m.logger.Store(slog.Default())
+	return m, nil
 }
 
 // MustLoad is like Load but panics on any error. Use it during application
@@ -92,11 +95,12 @@ func MustLoad(path string) *Manifest {
 // "http://localhost:5173" or "http://localhost:5173/build"). A trailing
 // slash is removed automatically.
 func Dev(baseURL string) *Manifest {
-	return &Manifest{
-		base:   strings.TrimRight(baseURL, "/"),
-		isDev:  true,
-		logger: slog.Default(),
+	m := &Manifest{
+		base:  strings.TrimRight(baseURL, "/"),
+		isDev: true,
 	}
+	m.logger.Store(slog.Default())
+	return m
 }
 
 // Entry returns the manifest entry for name. The second return value is
@@ -108,8 +112,8 @@ func (m *Manifest) Entry(name string) (Entry, bool) {
 }
 
 // SetLogger replaces the slog.Logger used for missing-entry warnings.
-// Call before exposing the manifest to handlers; not safe for concurrent
-// modification.
+// Safe for concurrent use; typically called once during application
+// startup, before the manifest is wired into request handlers.
 func (m *Manifest) SetLogger(l *slog.Logger) {
-	m.logger = l
+	m.logger.Store(l)
 }
