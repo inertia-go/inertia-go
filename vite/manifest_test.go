@@ -1,12 +1,15 @@
 package vite
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -138,4 +141,69 @@ func TestDev_TrimsTrailingSlash(t *testing.T) {
 	if m1 == nil || m2 == nil {
 		t.Fatal("Dev returned nil")
 	}
+}
+
+func TestAsset_ProdMode_ReturnsHashedURL(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"resources/images/logo.png": {File: "assets/logo-Hash.png"},
+	})
+	got := m.Asset("resources/images/logo.png")
+	if got != "/assets/logo-Hash.png" {
+		t.Errorf("got %q, want %q", got, "/assets/logo-Hash.png")
+	}
+}
+
+func TestAsset_DevMode_PrependsBaseURL(t *testing.T) {
+	m := Dev("http://localhost:5173")
+	got := m.Asset("resources/images/logo.png")
+	if got != "http://localhost:5173/resources/images/logo.png" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestAsset_DevMode_TrailingSlashOnBaseStripped(t *testing.T) {
+	m := Dev("http://localhost:5173/")
+	got := m.Asset("resources/images/logo.png")
+	if got != "http://localhost:5173/resources/images/logo.png" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestAsset_MissingEntry_ReturnsOriginalAndLogsOnce(t *testing.T) {
+	// Capture log output via a slog handler with a buffer.
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	m := newProdManifest(t, map[string]Entry{})
+	m.SetLogger(logger)
+
+	got1 := m.Asset("missing.png")
+	if got1 != "missing.png" {
+		t.Errorf("first call: got %q, want original 'missing.png'", got1)
+	}
+	got2 := m.Asset("missing.png")
+	if got2 != "missing.png" {
+		t.Errorf("second call: got %q, want original 'missing.png'", got2)
+	}
+	count := strings.Count(buf.String(), "missing.png")
+	if count == 0 {
+		t.Fatalf("expected at least one log entry, got none")
+	}
+	logEntries := strings.Count(buf.String(), "vite: entry not found")
+	if logEntries != 1 {
+		t.Errorf("expected 1 warning line, got %d (log buf: %s)", logEntries, buf.String())
+	}
+}
+
+// newProdManifest is a test helper that builds a prod-mode Manifest
+// from an entries map without touching the filesystem.
+func newProdManifest(t *testing.T, entries map[string]Entry) *Manifest {
+	t.Helper()
+	m := &Manifest{
+		entries: entries,
+		base:    "/",
+		isDev:   false,
+	}
+	m.logger.Store(slog.Default())
+	return m
 }

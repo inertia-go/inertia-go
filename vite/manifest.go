@@ -117,3 +117,33 @@ func (m *Manifest) Entry(name string) (Entry, bool) {
 func (m *Manifest) SetLogger(l *slog.Logger) {
 	m.logger.Store(l)
 }
+
+// Asset resolves a single asset entry to its URL. Use for non-script,
+// non-stylesheet resources (e.g. <img src=...>, <link rel="icon" ...>).
+//
+// In prod mode the URL is "/" + manifest entry's File field.
+// In dev mode the URL is baseURL + "/" + name.
+//
+// Missing entries return the original entry string (so layout doesn't
+// break on a typo) and log a one-time slog.Warn for that entry.
+func (m *Manifest) Asset(entry string) string {
+	if m.isDev {
+		return m.base + "/" + entry
+	}
+	e, ok := m.entries[entry]
+	if !ok {
+		m.logMissing(entry)
+		return entry
+	}
+	return m.base + e.File
+}
+
+// logMissing emits a slog.Warn the first time entry is observed missing.
+// Subsequent calls for the same entry are silent. Concurrent-safe via
+// sync.Map.LoadOrStore.
+func (m *Manifest) logMissing(entry string) {
+	if _, loaded := m.warned.LoadOrStore(entry, struct{}{}); loaded {
+		return
+	}
+	m.logger.Load().Warn("vite: entry not found", "entry", entry)
+}
