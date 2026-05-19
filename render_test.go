@@ -236,6 +236,16 @@ func TestRender_SSREnabled_InjectsHeadAndBody(t *testing.T) {
 	if strings.Contains(out, `data-page=`) {
 		t.Errorf("CSR fallback body should not be present when SSR succeeded: %s", out)
 	}
+
+	// Verify the SSR client received the serialized PageObject — not
+	// some pre-marshal value. The page should contain the component
+	// name and prop key/value.
+	if !strings.Contains(string(stub.lastPage), `"component":"Users/Index"`) {
+		t.Errorf("lastPage missing component: %s", string(stub.lastPage))
+	}
+	if !strings.Contains(string(stub.lastPage), `"foo":"bar"`) {
+		t.Errorf("lastPage missing props: %s", string(stub.lastPage))
+	}
 }
 
 func TestRender_SSRHeadJoinedOnNewline(t *testing.T) {

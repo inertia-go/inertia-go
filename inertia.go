@@ -67,6 +67,12 @@ type ViteHelper interface {
 // PageObject, identical to the bytes that would otherwise be embedded
 // in <div id="app" data-page='...'>.
 //
+// The returned head and body are injected verbatim into the root
+// template as template.HTML, bypassing html/template auto-escaping.
+// Use only a trusted SSR service: a hostile renderer could return
+// fragments that script the page. The reference *ssr.HTTPClient
+// assumes a developer-controlled loopback Node service.
+//
 // Implementations must respect ctx cancellation: the request's
 // context is forwarded so client disconnect aborts the SSR call.
 type SSRClient interface {
