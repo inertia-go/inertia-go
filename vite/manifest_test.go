@@ -442,11 +442,24 @@ func TestCSS_MissingEntry_LogsOnce(t *testing.T) {
 func TestReactRefresh_DevMode(t *testing.T) {
 	m := Dev("http://localhost:5173")
 	got := string(m.ReactRefresh())
-	if !strings.Contains(got, "http://localhost:5173/@react-refresh") {
-		t.Errorf("missing @react-refresh path: %q", got)
+
+	// Vite React Refresh plugin protocol: the preamble script must
+	// reach @react-refresh, instantiate RefreshRuntime, install the
+	// $RefreshReg$ / $RefreshSig$ hooks, and set the
+	// __vite_plugin_react_preamble_installed__ flag so the JSX runtime
+	// knows HMR is wired up.
+	required := []string{
+		"http://localhost:5173/@react-refresh",
+		"RefreshRuntime",
+		"injectIntoGlobalHook",
+		"$RefreshReg$",
+		"$RefreshSig$",
+		"__vite_plugin_react_preamble_installed__",
 	}
-	if !strings.Contains(got, "RefreshRuntime") {
-		t.Errorf("missing RefreshRuntime keyword: %q", got)
+	for _, want := range required {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in ReactRefresh output: %q", want, got)
+		}
 	}
 }
 
@@ -455,5 +468,17 @@ func TestReactRefresh_ProdMode_EmptyString(t *testing.T) {
 	got := string(m.ReactRefresh())
 	if got != "" {
 		t.Errorf("prod ReactRefresh should be empty, got %q", got)
+	}
+}
+
+func TestCSS_ProdMode_NoCSS_EmptyString(t *testing.T) {
+	// Entry exists, has File and IsEntry, but no CSS field and no imports.
+	// CSS should return "" (covers the len(cssOrdered)==0 branch).
+	m := newProdManifest(t, map[string]Entry{
+		"app.ts": {File: "assets/app.js", IsEntry: true},
+	})
+	got := string(m.CSS("app.ts"))
+	if got != "" {
+		t.Errorf("expected empty CSS output, got %q", got)
 	}
 }

@@ -96,6 +96,10 @@ func MustLoad(path string) *Manifest {
 // baseURL must include the scheme + host + optional base path (e.g.
 // "http://localhost:5173" or "http://localhost:5173/build"). A trailing
 // slash is removed automatically.
+//
+// baseURL must be a developer-controlled constant; it is interpolated
+// verbatim into asset URLs and into the inline ReactRefresh <script>
+// body. Attacker-controlled values would risk HTML injection.
 func Dev(baseURL string) *Manifest {
 	m := &Manifest{
 		base:  strings.TrimRight(baseURL, "/"),
