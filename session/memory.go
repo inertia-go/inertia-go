@@ -45,6 +45,8 @@ func (m *MemoryStore) sessionID(w http.ResponseWriter, r *http.Request) string {
 	return id
 }
 
+// entry returns the memEntry for id, creating it if absent.
+// Caller must hold m.mu.
 func (m *MemoryStore) entry(id string) *memEntry {
 	if e, ok := m.data[id]; ok {
 		return e

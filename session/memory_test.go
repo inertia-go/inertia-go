@@ -33,9 +33,11 @@ func TestMemoryStore_ErrorsRoundTrip(t *testing.T) {
 		t.Errorf("got %v, want %v", got, in)
 	}
 
-	// Second take should yield empty (read-and-clear).
+	// Second take should yield empty (read-and-clear of the bag).
+	// Reuse cookies from w (the original FlashErrors recorder) so r3 has
+	// a valid session id and we actually exercise the delete path.
 	r3 := httptest.NewRequest(http.MethodGet, "/", nil)
-	for _, c := range w2.Result().Cookies() {
+	for _, c := range w.Result().Cookies() {
 		r3.AddCookie(c)
 	}
 	got2, _ := s.TakeErrors(httptest.NewRecorder(), r3, "default")
