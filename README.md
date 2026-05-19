@@ -84,6 +84,43 @@ without backward compatibility for v1 or v2.
 | Vite manifest helper | v0.2.0 |
 | Precognition | Out of scope |
 
+## Vite Manifest
+
+The optional `vite` sub-package provides a `*Manifest` type that satisfies
+the main package's `ViteHelper` interface.
+
+```go
+import (
+    "github.com/inertia-go/inertia-go"
+    "github.com/inertia-go/inertia-go/vite"
+)
+
+// Production: load from manifest.json
+m := vite.MustLoad("public/build/manifest.json")
+
+// Development: point at the Vite dev server
+// m := vite.Dev("http://localhost:5173")
+
+i, _ := inertia.New(inertia.Config{
+    RootView:   "app.html",
+    TemplateFS: os.DirFS("views"),
+    Vite:       m,
+    Session:    store,
+})
+```
+
+Inside your root template, four helper functions are available:
+
+| Helper | Output |
+|---|---|
+| `{{ vite "entry.tsx" }}` | `<script>` + `modulepreload` links + `stylesheet` links |
+| `{{ viteCSS "entry.tsx" }}` | only `<link rel="stylesheet">` tags |
+| `{{ viteAsset "path/file.png" }}` | a single resolved URL |
+| `{{ viteReactRefresh }}` | React Refresh runtime (dev only; empty in prod) |
+
+If `Config.Vite` is nil the helpers become no-ops that log a single
+warning, so templates referencing them still parse.
+
 ## Framework Adapters
 
 - [inertia-go-gin](https://github.com/inertia-go/inertia-go-gin) — Gin

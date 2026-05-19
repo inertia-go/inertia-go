@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] — 2026-05-19
+
+### Added
+
+- `vite` sub-package providing `Manifest` (with `Load`, `MustLoad`, `Dev`
+  constructors) and four template helpers: `Tag`, `Asset`, `CSS`,
+  `ReactRefresh`. Pure-stdlib implementation, no external dependencies.
+- `ErrManifestNotFound` sentinel in `vite` package.
+- Main package: `ViteHelper` interface (parallel to `SessionStore`).
+- Root template FuncMap now exposes `vite`, `viteAsset`, `viteCSS`,
+  `viteReactRefresh`. When `Config.Vite` is nil each helper logs once and
+  emits empty content, so templates always parse.
+
+### Changed
+
+- `Config.Vite` type from `any` to `ViteHelper`. The v0.1.0 docs declared
+  this field reserved and ignored at runtime, so no working user code
+  depended on the previous type.
+
 ## [0.1.0] — 2026-05-19
 
 ### Added
@@ -33,5 +52,5 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Deferred to later releases
 
-- Vite manifest helper (`vite/`) — planned for v0.2.0.
+- Vite manifest helper (`vite/`) — landed in v0.2.0.
 - SSR HTTP client (`ssr/`) — planned for v0.3.0.
