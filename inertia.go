@@ -93,8 +93,11 @@ type Config struct {
 	// SSR is reserved for v0.3.0; ignored in v0.1.0.
 	SSR any
 
-	// Vite is reserved for v0.2.0; ignored in v0.1.0.
-	Vite any
+	// Vite, if non-nil, registers four template helpers in the root
+	// template: vite, viteAsset, viteCSS, viteReactRefresh. See the
+	// ViteHelper interface above; the vite sub-package provides a
+	// reference implementation via *vite.Manifest.
+	Vite ViteHelper
 
 	// SSRRequired switches SSR failure handling from fail-soft to fail-hard.
 	// Reserved for v0.3.0.
