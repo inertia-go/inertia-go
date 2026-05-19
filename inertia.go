@@ -42,6 +42,18 @@ type RootData struct {
 	PageJSON    template.JS
 }
 
+// ViteHelper is the contract the core package consumes from any
+// Vite-style asset resolver. The vite sub-package's *Manifest satisfies
+// this interface; users may also supply custom implementations (e.g.
+// a webpack-manifest resolver). A nil ViteHelper is permitted: each
+// template helper degrades to a no-op that logs once.
+type ViteHelper interface {
+	Tag(entry string) template.HTML
+	Asset(entry string) string
+	CSS(entry string) template.HTML
+	ReactRefresh() template.HTML
+}
+
 // Config configures an *Inertia instance. Required: Session.
 type Config struct {
 	// RootView is the template name (relative to TemplateFS) used for the
