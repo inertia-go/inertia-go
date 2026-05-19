@@ -195,6 +195,16 @@ func TestAsset_MissingEntry_ReturnsOriginalAndLogsOnce(t *testing.T) {
 	}
 }
 
+func TestAsset_ZeroValueManifest_NoPanic(t *testing.T) {
+	// Construct a Manifest without going through Load/Dev — the
+	// atomic.Pointer logger is nil. logMissing must not deref nil.
+	var m Manifest
+	got := m.Asset("missing.png")
+	if got != "missing.png" {
+		t.Errorf("got %q, want %q", got, "missing.png")
+	}
+}
+
 // newProdManifest is a test helper that builds a prod-mode Manifest
 // from an entries map without touching the filesystem.
 func newProdManifest(t *testing.T, entries map[string]Entry) *Manifest {

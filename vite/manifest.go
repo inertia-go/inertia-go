@@ -121,8 +121,10 @@ func (m *Manifest) SetLogger(l *slog.Logger) {
 // Asset resolves a single asset entry to its URL. Use for non-script,
 // non-stylesheet resources (e.g. <img src=...>, <link rel="icon" ...>).
 //
-// In prod mode the URL is "/" + manifest entry's File field.
-// In dev mode the URL is baseURL + "/" + name.
+// In prod mode the URL is the manifest base ("/") + the entry's File field.
+// In dev mode the URL is baseURL + "/" + entry. The entry argument is the
+// Vite source path (e.g. "resources/images/logo.png") and must not have a
+// leading slash.
 //
 // Missing entries return the original entry string (so layout doesn't
 // break on a typo) and log a one-time slog.Warn for that entry.
@@ -145,5 +147,7 @@ func (m *Manifest) logMissing(entry string) {
 	if _, loaded := m.warned.LoadOrStore(entry, struct{}{}); loaded {
 		return
 	}
-	m.logger.Load().Warn("vite: entry not found", "entry", entry)
+	if l := m.logger.Load(); l != nil {
+		l.Warn("vite: entry not found", "entry", entry)
+	}
 }
