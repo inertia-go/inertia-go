@@ -265,6 +265,51 @@ func (m *Manifest) collectDeps(root string) (css, preload []string) {
 	return css, preload
 }
 
+// CSS returns the stylesheet <link> tags reachable from entry. In dev
+// mode it returns an empty string because Vite's dev server handles CSS
+// HMR injection itself. Missing entries (prod) log a one-time warning.
+func (m *Manifest) CSS(entry string) template.HTML {
+	if m.isDev {
+		return ""
+	}
+	if _, ok := m.entries[entry]; !ok {
+		m.logMissing(entry)
+		return ""
+	}
+	cssOrdered, _ := m.collectDeps(entry)
+	if len(cssOrdered) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, c := range cssOrdered {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(`<link rel="stylesheet" href="`)
+		b.WriteString(c)
+		b.WriteString(`" />`)
+	}
+	return template.HTML(b.String())
+}
+
+// ReactRefresh returns the inline <script> that initializes the React
+// Refresh runtime in dev mode. In prod mode it returns an empty string.
+// Place {{ viteReactRefresh }} BEFORE {{ vite "app.tsx" }} in the
+// template head so the runtime is ready when the entry loads.
+func (m *Manifest) ReactRefresh() template.HTML {
+	if !m.isDev {
+		return ""
+	}
+	const tmpl = `<script type="module">
+import RefreshRuntime from "%s/@react-refresh"
+RefreshRuntime.injectIntoGlobalHook(window)
+window.$RefreshReg$ = () => {}
+window.$RefreshSig$ = () => (type) => type
+window.__vite_plugin_react_preamble_installed__ = true
+</script>`
+	return template.HTML(fmt.Sprintf(tmpl, m.base))
+}
+
 // logMissing emits a slog.Warn the first time entry is observed missing.
 // Subsequent calls for the same entry are silent. Concurrent-safe via
 // sync.Map.LoadOrStore.

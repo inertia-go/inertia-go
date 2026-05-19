@@ -387,3 +387,73 @@ func TestTag_MissingEntry_HTMLEscapesEntryName(t *testing.T) {
 		t.Errorf("expected HTML-escaped angle brackets, got %q", got)
 	}
 }
+
+func TestCSS_ProdMode_OnlyStylesheetLinks(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"app.ts": {
+			File:    "assets/app.js",
+			IsEntry: true,
+			CSS:     []string{"assets/app.css"},
+		},
+	})
+	got := string(m.CSS("app.ts"))
+	if !strings.Contains(got, `<link rel="stylesheet" href="/assets/app.css" />`) {
+		t.Errorf("missing stylesheet: %q", got)
+	}
+	if strings.Contains(got, "<script") {
+		t.Errorf("CSS should not emit script tags: %q", got)
+	}
+	if strings.Contains(got, "modulepreload") {
+		t.Errorf("CSS should not emit modulepreload: %q", got)
+	}
+}
+
+func TestCSS_ProdMode_CollectFromImports(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"app.ts":  {File: "assets/app.js", IsEntry: true, Imports: []string{"_dep.js"}},
+		"_dep.js": {File: "assets/dep.js", CSS: []string{"assets/dep.css"}},
+	})
+	got := string(m.CSS("app.ts"))
+	if !strings.Contains(got, "/assets/dep.css") {
+		t.Errorf("CSS from imports should be collected: %q", got)
+	}
+}
+
+func TestCSS_DevMode_EmptyString(t *testing.T) {
+	m := Dev("http://localhost:5173")
+	got := string(m.CSS("app.ts"))
+	if got != "" {
+		t.Errorf("dev mode CSS should be empty, got %q", got)
+	}
+}
+
+func TestCSS_MissingEntry_LogsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	m := newProdManifest(t, map[string]Entry{})
+	m.SetLogger(logger)
+	_ = m.CSS("typo.tsx")
+	_ = m.CSS("typo.tsx")
+	if strings.Count(buf.String(), "typo.tsx") != 1 {
+		t.Errorf("log-once violated: %s", buf.String())
+	}
+}
+
+func TestReactRefresh_DevMode(t *testing.T) {
+	m := Dev("http://localhost:5173")
+	got := string(m.ReactRefresh())
+	if !strings.Contains(got, "http://localhost:5173/@react-refresh") {
+		t.Errorf("missing @react-refresh path: %q", got)
+	}
+	if !strings.Contains(got, "RefreshRuntime") {
+		t.Errorf("missing RefreshRuntime keyword: %q", got)
+	}
+}
+
+func TestReactRefresh_ProdMode_EmptyString(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{})
+	got := string(m.ReactRefresh())
+	if got != "" {
+		t.Errorf("prod ReactRefresh should be empty, got %q", got)
+	}
+}
