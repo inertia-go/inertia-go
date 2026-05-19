@@ -81,3 +81,22 @@ func (c *HTTPClient) Render(ctx context.Context, page json.RawMessage) (head []s
 	}
 	return payload.Head, payload.Body, nil
 }
+
+// Ping issues a GET to c.Health. Returns nil on any 2xx. Useful for
+// liveness probes in your own health-check handlers or a startup gate;
+// the package never calls Ping automatically.
+func (c *HTTPClient) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Health, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("ssr: health check returned status %d", resp.StatusCode)
+	}
+	return nil
+}
