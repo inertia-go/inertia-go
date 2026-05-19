@@ -9,6 +9,8 @@
 package inertia
 
 import (
+	"context"
+	"encoding/json"
 	"html/template"
 	"io"
 	"io/fs"
@@ -52,6 +54,23 @@ type ViteHelper interface {
 	Asset(entry string) string
 	CSS(entry string) template.HTML
 	ReactRefresh() template.HTML
+}
+
+// SSRClient is the contract the core package consumes from any
+// server-side renderer. The ssr sub-package's *HTTPClient satisfies
+// this interface; users may supply alternatives (gRPC, in-process
+// renderer, pool with retries, ...). A nil SSRClient disables SSR
+// entirely.
+//
+// Render is invoked once per initial HTML response — Inertia XHR
+// requests skip SSR. The page argument is the already-serialized
+// PageObject, identical to the bytes that would otherwise be embedded
+// in <div id="app" data-page='...'>.
+//
+// Implementations must respect ctx cancellation: the request's
+// context is forwarded so client disconnect aborts the SSR call.
+type SSRClient interface {
+	Render(ctx context.Context, page json.RawMessage) (head []string, body string, err error)
 }
 
 // Config configures an *Inertia instance. Required: Session.
