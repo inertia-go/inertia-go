@@ -109,6 +109,9 @@ type Inertia struct {
 
 	logger *slog.Logger
 
+	fsVerOnce sync.Once
+	fsVer     string
+
 	// nowFn is overridable in tests.
 	nowFn func() time.Time
 }
