@@ -23,13 +23,20 @@ type Noop struct{}
 // NewNoop returns a Noop store.
 func NewNoop() Noop { return Noop{} }
 
+// FlashErrors discards the errors and returns nil.
 func (Noop) FlashErrors(http.ResponseWriter, *http.Request, string, map[string]string) error {
 	return nil
 }
+
+// TakeErrors returns an empty error map.
 func (Noop) TakeErrors(http.ResponseWriter, *http.Request, string) (map[string]string, error) {
 	return nil, nil
 }
+
+// FlashMessage discards the message and returns nil.
 func (Noop) FlashMessage(http.ResponseWriter, *http.Request, string, any) error { return nil }
+
+// TakeMessages returns an empty message map.
 func (Noop) TakeMessages(http.ResponseWriter, *http.Request) (map[string]any, error) {
 	return nil, nil
 }

@@ -1,12 +1,13 @@
+version: "2"
+
 run:
   timeout: 5m
   go: "1.23"
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
@@ -14,20 +15,18 @@ linters:
     - revive
     - gocyclo
     - misspell
-
-linters-settings:
-  gocyclo:
-    min-complexity: 18
-  revive:
+  settings:
+    gocyclo:
+      min-complexity: 18
+    revive:
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: unused-parameter
+          disabled: true
+  exclusions:
     rules:
-      - name: exported
-      - name: var-naming
-      - name: unused-parameter
-        disabled: true
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
