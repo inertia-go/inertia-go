@@ -169,3 +169,24 @@ func defaultErrorHandler(logger *slog.Logger) func(http.ResponseWriter, *http.Re
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
+
+// Share registers a per-request prop function whose result is merged into
+// every Render call's props. Callbacks run on every request unless the
+// partial-reload filter excludes them.
+func (i *Inertia) Share(key string, fn func(r *http.Request) any) {
+	i.sharedMu.Lock()
+	defer i.sharedMu.Unlock()
+	i.sharedFuncs[key] = fn
+}
+
+// ShareValue registers a static value that is merged into every Render call.
+func (i *Inertia) ShareValue(key string, v any) {
+	i.sharedMu.Lock()
+	defer i.sharedMu.Unlock()
+	i.sharedStatic[key] = v
+}
+
+// ShareEval is an alias for Share kept for parity with the design spec.
+func (i *Inertia) ShareEval(key string, fn func(r *http.Request) any) {
+	i.Share(key, fn)
+}
