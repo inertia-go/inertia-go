@@ -84,3 +84,28 @@ func TestEvaluate_PropagatesError(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+func TestDefer_EmptyStringGroupDefaults(t *testing.T) {
+	p := Defer(func() (any, error) { return 1, nil }, "")
+	if g := p.deferGroup(); g != "default" {
+		t.Errorf("empty string group should default, got %q", g)
+	}
+}
+
+func TestDefer_TooManyGroupsPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for multiple group labels")
+		}
+	}()
+	_ = Defer(func() (any, error) { return 1, nil }, "a", "b")
+}
+
+func TestDefer_PropagatesError(t *testing.T) {
+	want := errors.New("boom")
+	p := Defer(func() (any, error) { return nil, want })
+	_, err := p.evaluate()
+	if !errors.Is(err, want) {
+		t.Errorf("got %v", err)
+	}
+}

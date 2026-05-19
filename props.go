@@ -20,6 +20,13 @@ type propWrapper interface {
 	deferGroup() string
 }
 
+// The five exported constructors below (Always, Optional, Defer, Merge,
+// DeepMerge) return values that implement propWrapper. The interface is
+// internal: callers should treat the return value as an opaque handle to
+// put into a Props map, and never attempt to assert it back to a concrete
+// type or call its methods directly. The renderer extracts the behaviour
+// via the partial.go and render.go helpers.
+
 // alwaysWrap forces inclusion on every response and on every partial reload.
 type alwaysWrap struct{ v any }
 
@@ -58,10 +65,15 @@ type deferWrap struct {
 
 // Defer wraps a callback that is excluded from the initial response and
 // listed in PageObject.deferredProps so the client fetches it post-mount.
-// Optional group label (default "default") batches deferred props together.
+// At most one group label may be passed (default "default"); passing more
+// than one panics. The group batches deferred props that should be fetched
+// in the same partial-reload request.
 func Defer(fn func() (any, error), group ...string) propWrapper {
+	if len(group) > 1 {
+		panic("inertia.Defer: at most one group label is allowed")
+	}
 	g := "default"
-	if len(group) > 0 && group[0] != "" {
+	if len(group) == 1 && group[0] != "" {
 		g = group[0]
 	}
 	return deferWrap{fn: fn, group: g}
