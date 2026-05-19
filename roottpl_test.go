@@ -2,6 +2,7 @@ package inertia
 
 import (
 	"bytes"
+	"html/template"
 	"io"
 	"strings"
 	"testing"
@@ -59,5 +60,59 @@ func TestRenderRootHTML_RootRenderHookOverrides(t *testing.T) {
 	}
 	if !called || buf.String() != "custom" {
 		t.Errorf("hook not used: %q", buf.String())
+	}
+}
+
+// stubViteHelper implements ViteHelper for tests, returning canned strings.
+type stubViteHelper struct {
+	tagOut, assetOut, cssOut, refreshOut string
+}
+
+func (s stubViteHelper) Tag(_ string) template.HTML  { return template.HTML(s.tagOut) }
+func (s stubViteHelper) Asset(_ string) string       { return s.assetOut }
+func (s stubViteHelper) CSS(_ string) template.HTML  { return template.HTML(s.cssOut) }
+func (s stubViteHelper) ReactRefresh() template.HTML { return template.HTML(s.refreshOut) }
+
+func TestRenderRootHTML_ViteFuncMap_PropagatesToTemplate(t *testing.T) {
+	fs := fstest.MapFS{
+		"app.html": {Data: []byte(`{{ vite "x" }}|{{ viteAsset "y" }}|{{ viteCSS "z" }}|{{ viteReactRefresh }}`)},
+	}
+	i, _ := New(Config{
+		Session:    stubSession{},
+		RootView:   "app.html",
+		TemplateFS: fs,
+		Vite: stubViteHelper{
+			tagOut:     "<TAG>",
+			assetOut:   "ASSET",
+			cssOut:     "<CSS>",
+			refreshOut: "<REFRESH>",
+		},
+	})
+	var buf bytes.Buffer
+	if err := i.renderRoot(&buf, RootData{}); err != nil {
+		t.Fatal(err)
+	}
+	want := "<TAG>|ASSET|<CSS>|<REFRESH>"
+	if buf.String() != want {
+		t.Errorf("got %q, want %q", buf.String(), want)
+	}
+}
+
+func TestRenderRootHTML_NoVite_HelpersAreNoop(t *testing.T) {
+	fs := fstest.MapFS{
+		"app.html": {Data: []byte(`{{ vite "x" }}|{{ viteAsset "y" }}|{{ viteCSS "z" }}|{{ viteReactRefresh }}`)},
+	}
+	i, _ := New(Config{
+		Session:    stubSession{},
+		RootView:   "app.html",
+		TemplateFS: fs,
+		// Vite intentionally nil
+	})
+	var buf bytes.Buffer
+	if err := i.renderRoot(&buf, RootData{}); err != nil {
+		t.Fatalf("template should still parse and execute: %v", err)
+	}
+	if buf.String() != "|||" {
+		t.Errorf("expected empty helpers, got %q", buf.String())
 	}
 }
