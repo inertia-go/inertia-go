@@ -140,3 +140,49 @@ func TestRender_SharedProps_Merged(t *testing.T) {
 		t.Errorf("auth: %v", page.Props["auth"])
 	}
 }
+
+func TestRender_InitialHTML_DataPageIsValidJSONAfterHTMLParse(t *testing.T) {
+	// Regression test: the data-page attribute must contain JSON that a
+	// browser-grade HTML parser can extract and JSON.parse. The attribute
+	// is single-quoted so JSON's double quotes don't terminate it; HTML
+	// entities (&amp;, &lt;, etc.) must be decoded before JSON parsing.
+	i := newTestInertia(t)
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Users/Index", Props{"users": []int{1, 2}})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/users", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	// Locate data-page='...' and extract through to the matching single quote.
+	const marker = `data-page='`
+	idx := strings.Index(body, marker)
+	if idx < 0 {
+		t.Fatalf("data-page='...' marker not found in body: %s", body)
+	}
+	rest := body[idx+len(marker):]
+	end := strings.IndexByte(rest, '\'')
+	if end < 0 {
+		t.Fatalf("no closing single quote for data-page in body: %s", body)
+	}
+	rawAttr := rest[:end]
+
+	// html/template entity-encodes the JSON when interpolating into HTML.
+	decoded := strings.NewReplacer(
+		"&#34;", `"`,
+		"&quot;", `"`,
+		"&amp;", "&",
+		"&lt;", "<",
+		"&gt;", ">",
+		"&#43;", "+",
+	).Replace(rawAttr)
+
+	var page PageObject
+	if err := json.Unmarshal([]byte(decoded), &page); err != nil {
+		t.Fatalf("data-page is not valid JSON after HTML decode: %v\nraw=%q\ndecoded=%q", err, rawAttr, decoded)
+	}
+	if page.Component != "Users/Index" {
+		t.Errorf("component: %q", page.Component)
+	}
+}

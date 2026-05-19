@@ -43,7 +43,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	evaluated, mergeKeys, deepMergeKeys, deferred, err := i.evaluatePropsFor(r, merged, keep)
 	if err != nil {
 		i.cfg.ErrorHandler(w, r,
-			fmt.Errorf("%w: %s", ErrPropEvaluationFailed, err.Error()))
+			fmt.Errorf("%w: %w", ErrPropEvaluationFailed, err))
 		return
 	}
 
@@ -64,7 +64,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	}
 
 	if info.IsInertia {
-		i.writeJSON(w, page)
+		i.writeJSON(w, r, page)
 		return
 	}
 	i.writeHTML(w, r, page)
@@ -73,14 +73,16 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {
 	out := Props{}
 
-	i.sharedMu.RLock()
-	for k, v := range i.sharedStatic {
-		out[k] = v
-	}
-	for k, fn := range i.sharedFuncs {
-		out[k] = fn(r)
-	}
-	i.sharedMu.RUnlock()
+	func() {
+		i.sharedMu.RLock()
+		defer i.sharedMu.RUnlock()
+		for k, v := range i.sharedStatic {
+			out[k] = v
+		}
+		for k, fn := range i.sharedFuncs {
+			out[k] = fn(r)
+		}
+	}()
 
 	// session errors / messages
 	if errs, _ := r.Context().Value(ctxKeySessionErrors).(map[string]string); len(errs) > 0 {
@@ -162,10 +164,10 @@ func evaluateOne(v any) (any, error) {
 	return v, nil
 }
 
-func (i *Inertia) writeJSON(w http.ResponseWriter, page PageObject) {
+func (i *Inertia) writeJSON(w http.ResponseWriter, r *http.Request, page PageObject) {
 	body, err := json.Marshal(page)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		i.cfg.ErrorHandler(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -182,7 +184,7 @@ func (i *Inertia) writeHTML(w http.ResponseWriter, r *http.Request, page PageObj
 	}
 	data := RootData{
 		InertiaHead: "",
-		InertiaBody: template.HTML(fmt.Sprintf(`<div id="app" data-page=%q></div>`, string(body))),
+		InertiaBody: template.HTML(fmt.Sprintf(`<div id="app" data-page='%s'></div>`, string(body))),
 		Component:   page.Component,
 		URL:         page.URL,
 		Version:     page.Version,
