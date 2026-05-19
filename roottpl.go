@@ -1,6 +1,7 @@
 package inertia
 
 import (
+	"fmt"
 	"html/template"
 	"io"
 )
@@ -39,7 +40,13 @@ func (i *Inertia) loadRootTemplate() (*template.Template, error) {
 	}
 	if !i.cfg.HotReload {
 		i.rootTplMu.Lock()
-		i.rootTpl = t
+		if i.rootTpl == nil {
+			i.rootTpl = t
+		} else {
+			// Lost a race with another goroutine; reuse their template
+			// so subsequent reads see a stable instance.
+			t = i.rootTpl
+		}
 		i.rootTplMu.Unlock()
 	}
 	return t, nil
@@ -52,7 +59,7 @@ func (i *Inertia) parseRootTemplate() (*template.Template, error) {
 	}
 	t, err := template.ParseFS(i.cfg.TemplateFS, i.cfg.RootView)
 	if err != nil {
-		return nil, ErrTemplateNotFound
+		return nil, fmt.Errorf("%w: %w", ErrTemplateNotFound, err)
 	}
 	return t, nil
 }
