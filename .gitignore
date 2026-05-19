@@ -1,0 +1,17 @@
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Go build / test artifacts
+*.test
+*.out
+cover.out
+coverage.txt
+
+# Local-only working docs (AI workflow, not part of the package)
+docs/superpowers/
+
+# Example build outputs
+examples/*/tmp/
+examples/*/bin/
