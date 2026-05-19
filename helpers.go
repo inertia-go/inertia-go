@@ -64,9 +64,11 @@ func (f *FlashCollector) Set(key string, value any) *FlashCollector {
 	return f
 }
 
-// ValidationErrors returns the request-scoped error collector. Returns a
-// no-op collector if called outside the Middleware (callers should not
-// rely on the absence — log noise is intentional).
+// ValidationErrors returns the request-scoped error collector populated by
+// Middleware. If the request has not passed through Middleware, a fresh
+// orphan collector is returned: writes to it are silently discarded and
+// will not reach the session. Always install Middleware to enable error
+// flashing across redirects.
 func ValidationErrors(r *http.Request) *ErrorBagCollector {
 	if c, ok := r.Context().Value(ctxKeyErrorBag).(*ErrorBagCollector); ok {
 		return c
@@ -74,7 +76,10 @@ func ValidationErrors(r *http.Request) *ErrorBagCollector {
 	return newErrorBag()
 }
 
-// Flash returns the request-scoped flash collector.
+// Flash returns the request-scoped flash collector populated by Middleware.
+// If the request has not passed through Middleware, a fresh orphan
+// collector is returned: writes to it are silently discarded and will not
+// reach the session.
 func Flash(r *http.Request) *FlashCollector {
 	if c, ok := r.Context().Value(ctxKeyFlashBag).(*FlashCollector); ok {
 		return c

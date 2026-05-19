@@ -85,6 +85,7 @@ func splitCSV(v string) []string {
 		return nil
 	}
 	parts := strings.Split(v, ",")
+	// Reuse parts' backing array; safe because strings.Split allocates a fresh slice here.
 	out := parts[:0]
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
