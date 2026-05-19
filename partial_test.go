@@ -8,11 +8,11 @@ import (
 
 func TestFilterKeys_FullResponse_KeepsEagerEvaluatedOnly(t *testing.T) {
 	props := Props{
-		"users":  []int{1, 2},                                  // bare, eager
-		"stats":  Optional(func() (any, error) { return 1, nil }), // lazy
-		"perms":  Defer(func() (any, error) { return 1, nil }),    // deferred
-		"auth":   Always("u"),                                  // always
-		"tags":   Merge([]int{1}),                              // eager + merge
+		"users": []int{1, 2},                                     // bare, eager
+		"stats": Optional(func() (any, error) { return 1, nil }), // lazy
+		"perms": Defer(func() (any, error) { return 1, nil }),    // deferred
+		"auth":  Always("u"),                                     // always
+		"tags":  Merge([]int{1}),                                 // eager + merge
 	}
 	keep := filterKeys(props, "", "", nil, nil)
 	sort.Strings(keep)
@@ -24,11 +24,11 @@ func TestFilterKeys_FullResponse_KeepsEagerEvaluatedOnly(t *testing.T) {
 
 func TestFilterKeys_PartialReload_KeepsRequestedAndAlways(t *testing.T) {
 	props := Props{
-		"users":  []int{1, 2},
-		"stats":  Optional(func() (any, error) { return 1, nil }),
-		"perms":  Defer(func() (any, error) { return 1, nil }),
-		"auth":   Always("u"),
-		"tags":   Merge([]int{1}),
+		"users": []int{1, 2},
+		"stats": Optional(func() (any, error) { return 1, nil }),
+		"perms": Defer(func() (any, error) { return 1, nil }),
+		"auth":  Always("u"),
+		"tags":  Merge([]int{1}),
 	}
 	keep := filterKeys(props,
 		"Users/Index", "Users/Index",
