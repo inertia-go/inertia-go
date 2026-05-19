@@ -53,6 +53,12 @@ func (i *Inertia) Back(w http.ResponseWriter, r *http.Request) {
 // Flash helpers) to the configured Session store. It is a no-op when the
 // collectors are absent (i.e. the request did not go through Middleware)
 // or empty (no writes were made).
+//
+// The `dirty` fields are read without holding the collectors' mutexes.
+// This is safe because Add/Set (the only writers) and persistCollectors
+// (the only reader of dirty before locking) execute in the same goroutine
+// — the standard net/http per-request goroutine model — so the writes
+// happen-before the reads.
 func (i *Inertia) persistCollectors(w http.ResponseWriter, r *http.Request) {
 	if eb, ok := r.Context().Value(ctxKeyErrorBag).(*ErrorBagCollector); ok && eb.dirty {
 		eb.mu.Lock()
