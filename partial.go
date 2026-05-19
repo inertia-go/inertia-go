@@ -46,9 +46,7 @@ func filterKeys(props Props, reqComponent, currentComponent string,
 			continue
 		}
 		if requested[k] || alwaysIncluded(v) {
-			if _, exists := props[k]; exists {
-				out = append(out, k)
-			}
+			out = append(out, k)
 		}
 	}
 	return out
