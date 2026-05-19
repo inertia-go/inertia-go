@@ -88,3 +88,14 @@ func TestBack_ReadsReferer(t *testing.T) {
 		t.Errorf("Location: %q", got)
 	}
 }
+
+func TestBack_NoReferer_FallsBackToRoot(t *testing.T) {
+	i := newTestInertia(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	// Referer header intentionally absent
+	i.Back(w, r)
+	if got := w.Header().Get("Location"); got != "/" {
+		t.Errorf("Location: %q, want /", got)
+	}
+}
