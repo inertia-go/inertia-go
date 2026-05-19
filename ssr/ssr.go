@@ -67,7 +67,7 @@ func (c *HTTPClient) Render(ctx context.Context, page json.RawMessage) (head []s
 	if err != nil {
 		return nil, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
 		return nil, "", fmt.Errorf("ssr: render status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
@@ -94,7 +94,7 @@ func (c *HTTPClient) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("ssr: health check returned status %d", resp.StatusCode)
 	}
