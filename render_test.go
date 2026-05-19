@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/inertia-go/inertia-go/session"
 )
 
 func TestRender_InitialHTML_EmbedsPageObject(t *testing.T) {
@@ -184,5 +186,58 @@ func TestRender_InitialHTML_DataPageIsValidJSONAfterHTMLParse(t *testing.T) {
 	}
 	if page.Component != "Users/Index" {
 		t.Errorf("component: %q", page.Component)
+	}
+}
+
+func TestRedirect_FlashesErrorsAndMessages(t *testing.T) {
+	store := session.NewMemory()
+	i, _ := New(Config{Session: store})
+
+	// POST that fails validation and redirects-back.
+	createHandler := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ValidationErrors(r).Add("email", "invalid")
+		Flash(r).Set("success", "Saved")
+		i.Redirect(w, r, "/new")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/users", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	createHandler.ServeHTTP(rec, req)
+
+	// Verify redirect actually happened.
+	if rec.Code != http.StatusFound {
+		// POST -> 302 (Inertia v3 promotes only PUT/PATCH/DELETE to 303;
+		// POST stays 302 unless this changes in the protocol).
+		t.Fatalf("redirect code: %d", rec.Code)
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("expected session cookie to be set after Redirect flashed collectors")
+	}
+
+	// Follow-up GET should see errors + flash injected as props.
+	formHandler := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Users/New", Props{})
+	}))
+	req2 := httptest.NewRequest(http.MethodGet, "/new", nil)
+	req2.Header.Set("X-Inertia", "true")
+	for _, c := range cookies {
+		req2.AddCookie(c)
+	}
+	rec2 := httptest.NewRecorder()
+	formHandler.ServeHTTP(rec2, req2)
+
+	var page PageObject
+	if err := json.Unmarshal(rec2.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	errs, _ := page.Props["errors"].(map[string]any)
+	if errs["email"] != "invalid" {
+		t.Errorf("expected errors.email=invalid, got %v", page.Props["errors"])
+	}
+	flash, _ := page.Props["flash"].(map[string]any)
+	if flash["success"] != "Saved" {
+		t.Errorf("expected flash.success=Saved, got %v", page.Props["flash"])
 	}
 }
