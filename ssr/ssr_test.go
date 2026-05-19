@@ -1,7 +1,12 @@
 package ssr
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -38,3 +43,82 @@ var _ = (&HTTPClient{
 	Health: "",
 	HTTP:   &http.Client{},
 }).URL
+
+func TestRender_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"head":["<title>Hi</title>","<meta name=\"x\" content=\"y\">"],"body":"<div id=\"app\">SSR</div>"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewHTTP(srv.URL)
+	head, body, err := c.Render(context.Background(), json.RawMessage(`{"component":"X"}`))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(head) != 2 {
+		t.Errorf("head len = %d, want 2", len(head))
+	}
+	if head[0] != "<title>Hi</title>" {
+		t.Errorf("head[0] = %q", head[0])
+	}
+	if body != `<div id="app">SSR</div>` {
+		t.Errorf("body = %q", body)
+	}
+}
+
+func TestRender_PostsRawPageJSON(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"head":[],"body":""}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	page := json.RawMessage(`{"component":"Users/Index","props":{"a":1}}`)
+	c := NewHTTP(srv.URL)
+	if _, _, err := c.Render(context.Background(), page); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(captured, []byte(page)) {
+		t.Errorf("server received %q, want %q", captured, page)
+	}
+}
+
+func TestRender_ContentTypeHeader(t *testing.T) {
+	var ct string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ct = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"head":[],"body":""}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewHTTP(srv.URL)
+	if _, _, err := c.Render(context.Background(), json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+func TestRender_NullHead_BecomesEmptySlice(t *testing.T) {
+	// Per spec §3.2: missing or null head decodes to nil slice and
+	// produces empty InertiaHead at the call site.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"head":null,"body":"<div></div>"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewHTTP(srv.URL)
+	head, body, err := c.Render(context.Background(), json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(head) != 0 {
+		t.Errorf("expected empty head, got %v", head)
+	}
+	if body != "<div></div>" {
+		t.Errorf("body = %q", body)
+	}
+}

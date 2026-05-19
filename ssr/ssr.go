@@ -16,6 +16,11 @@
 package ssr
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -42,4 +47,37 @@ func NewHTTP(baseURL string) *HTTPClient {
 		Health: base + "/health",
 		HTTP:   &http.Client{Timeout: 2 * time.Second},
 	}
+}
+
+// Render POSTs page (a serialized Inertia PageObject) to c.URL with
+// Content-Type application/json, decodes the JSON response into head
+// and body, and returns them. The context is forwarded to the
+// underlying HTTP request so callers' cancellation propagates.
+//
+// Returns an error for transport failures (timeout, dial, ctx cancel),
+// non-2xx responses (with a short response-body snippet for diagnostics),
+// or malformed JSON in the response.
+func (c *HTTPClient) Render(ctx context.Context, page json.RawMessage) (head []string, body string, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(page))
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return nil, "", fmt.Errorf("ssr: render status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var payload struct {
+		Head []string `json:"head"`
+		Body string   `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, "", fmt.Errorf("ssr: decode response: %w", err)
+	}
+	return payload.Head, payload.Body, nil
 }
