@@ -121,6 +121,38 @@ Inside your root template, four helper functions are available:
 If `Config.Vite` is nil the helpers become no-ops that log a single
 warning, so templates referencing them still parse.
 
+## SSR
+
+The optional `ssr` sub-package speaks the Inertia.js SSR HTTP
+protocol. The main package's `SSRClient` interface is satisfied by
+`*ssr.HTTPClient`; users may supply other implementations.
+
+```go
+import (
+    "github.com/inertia-go/inertia-go"
+    "github.com/inertia-go/inertia-go/ssr"
+)
+
+i, _ := inertia.New(inertia.Config{
+    RootView:   "app.html",
+    TemplateFS: os.DirFS("views"),
+    Session:    store,
+    SSR:        ssr.NewHTTP("http://127.0.0.1:13714"),
+    // SSRRequired: true,  // fail-hard instead of CSR fallback
+})
+```
+
+Include `{{ .InertiaHead }}` in your root template's `<head>` to
+receive the SSR-emitted tags. SSR runs only on the initial HTML
+response — Inertia XHR navigations skip it.
+
+On error the package logs an `slog.Warn` and falls back to
+client-side rendering. Set `Config.SSRRequired = true` to route
+errors through `Config.ErrorHandler` (default: 500) instead.
+Process management for the Node SSR service is out of scope — run
+it under systemd, supervisord, a k8s sidecar, or whatever fits your
+stack.
+
 ## Framework Adapters
 
 - [inertia-go-gin](https://github.com/inertia-go/inertia-go-gin) — Gin
