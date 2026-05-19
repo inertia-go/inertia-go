@@ -109,8 +109,12 @@ type Config struct {
 	ErrorsPropKey   string // default "errors"
 	DefaultErrorBag string // default "default"
 
-	// SSR is reserved for v0.3.0; ignored in v0.1.0.
-	SSR any
+	// SSR, if non-nil, enables server-side pre-rendering for the
+	// initial HTML response. Inertia XHR requests skip SSR. On error
+	// the default behaviour is to log a warning and fall back to CSR;
+	// set SSRRequired=true to convert SSR errors into 500s via
+	// ErrorHandler.
+	SSR SSRClient
 
 	// Vite, if non-nil, registers four template helpers in the root
 	// template: vite, viteAsset, viteCSS, viteReactRefresh. See the
@@ -118,8 +122,9 @@ type Config struct {
 	// reference implementation via *vite.Manifest.
 	Vite ViteHelper
 
-	// SSRRequired switches SSR failure handling from fail-soft to fail-hard.
-	// Reserved for v0.3.0.
+	// SSRRequired, when true, converts SSR errors into HTTP 500
+	// responses routed through ErrorHandler with the underlying error
+	// wrapped as ErrSSRUnavailable. Default: log + fall back to CSR.
 	SSRRequired bool
 
 	// ErrorHandler handles unrecoverable runtime errors (prop evaluation
