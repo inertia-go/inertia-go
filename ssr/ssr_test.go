@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,5 +121,77 @@ func TestRender_NullHead_BecomesEmptySlice(t *testing.T) {
 	}
 	if body != "<div></div>" {
 		t.Errorf("body = %q", body)
+	}
+}
+
+func TestRender_Non2xx_ReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("upstream down"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewHTTP(srv.URL)
+	_, _, err := c.Render(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("error should contain status code, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "upstream down") {
+		t.Errorf("error should contain response snippet, got %q", err.Error())
+	}
+}
+
+func TestRender_MalformedJSON_ReturnsDecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("{not json"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewHTTP(srv.URL)
+	_, _, err := c.Render(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Errorf("error should mention decode, got %q", err.Error())
+	}
+}
+
+func TestRender_RespectsContextCancel(t *testing.T) {
+	// Server blocks until the request body is closed (i.e. ctx cancel
+	// propagates). It returns nothing useful — the test just verifies
+	// the client errors out promptly when ctx is canceled.
+	hold := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-hold
+	}))
+	t.Cleanup(func() {
+		close(hold)
+		srv.Close()
+	})
+
+	c := NewHTTP(srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-canceled
+	_, _, err := c.Render(ctx, json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected error from canceled context")
+	}
+}
+
+func TestRender_TimeoutFires(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewHTTP(srv.URL)
+	c.HTTP = &http.Client{Timeout: 20 * time.Millisecond}
+	_, _, err := c.Render(context.Background(), json.RawMessage(`{}`))
+	if err == nil {
+		t.Fatal("expected timeout error")
 	}
 }
