@@ -2,6 +2,7 @@ package session
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -54,8 +55,16 @@ func TestCookieStore_TamperedCookieFailsSilently(t *testing.T) {
 
 	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
 	for _, c := range w.Result().Cookies() {
-		// Flip a byte inside the value.
-		c.Value = c.Value[:len(c.Value)-1] + "A"
+		// Decode the base64 value, flip a byte in the middle of the ciphertext
+		// (well away from the GCM tag), then re-encode.  Corrupting at the raw
+		// byte level guarantees the tamper is never a no-op, unlike flipping the
+		// last base64 character which may encode only padding bits (~25% no-op).
+		raw, err := base64.RawURLEncoding.DecodeString(c.Value)
+		if err != nil || len(raw) < nonceSize+2 {
+			t.Fatalf("could not decode cookie value: %v", err)
+		}
+		raw[nonceSize] ^= 0xFF // first byte of ciphertext
+		c.Value = base64.RawURLEncoding.EncodeToString(raw)
 		r2.AddCookie(c)
 	}
 	got, err := s.TakeErrors(httptest.NewRecorder(), r2, "default")
