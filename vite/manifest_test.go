@@ -482,3 +482,45 @@ func TestCSS_ProdMode_NoCSS_EmptyString(t *testing.T) {
 		t.Errorf("expected empty CSS output, got %q", got)
 	}
 }
+
+func TestEntry_LookupOK(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{
+		"app.ts": {File: "assets/app.js", IsEntry: true},
+	})
+	e, ok := m.Entry("app.ts")
+	if !ok {
+		t.Fatal("ok should be true")
+	}
+	if e.File != "assets/app.js" {
+		t.Errorf("File: %q", e.File)
+	}
+}
+
+func TestEntry_LookupMiss(t *testing.T) {
+	m := newProdManifest(t, map[string]Entry{})
+	_, ok := m.Entry("missing")
+	if ok {
+		t.Error("ok should be false")
+	}
+}
+
+func TestLogWarningOnce_DifferentEntries(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	m := newProdManifest(t, map[string]Entry{})
+	m.SetLogger(logger)
+
+	_ = m.Asset("missing-a.png")
+	_ = m.Asset("missing-b.png")
+	_ = m.Asset("missing-a.png") // duplicate, should be silent
+	_ = m.Asset("missing-b.png") // duplicate, should be silent
+
+	logA := strings.Count(buf.String(), "missing-a.png")
+	logB := strings.Count(buf.String(), "missing-b.png")
+	if logA != 1 {
+		t.Errorf("missing-a.png logged %d times, want 1", logA)
+	}
+	if logB != 1 {
+		t.Errorf("missing-b.png logged %d times, want 1", logB)
+	}
+}
