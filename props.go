@@ -6,8 +6,8 @@ type propWrapper interface {
 	// evaluate returns the prop's value, invoking any callback.
 	evaluate() (any, error)
 	// evaluateEager reports whether the prop is evaluated in the full-response
-	// (non-partial) path. Always/Merge/DeepMerge return true; Optional/Defer
-	// return false.
+	// (non-partial) path. Always/Merge/DeepMerge/Prepend/MatchOn return true;
+	// Optional/Defer return false.
 	evaluateEager() bool
 	// alwaysInclude reports whether the prop must be included even on partial
 	// reloads when not explicitly requested (i.e. Always).
@@ -16,6 +16,11 @@ type propWrapper interface {
 	isMerge() bool
 	// isDeepMerge reports whether deepMergeProps should include this key.
 	isDeepMerge() bool
+	// isPrepend reports whether prependProps should include this key.
+	isPrepend() bool
+	// matchOnKeys returns the dotted key paths used for matchPropsOn
+	// reconciliation, or nil if this is not a MatchOn wrapper.
+	matchOnKeys() []string
 	// deferGroup returns the Defer group, or "" if not a Defer wrapper.
 	deferGroup() string
 }
@@ -39,6 +44,8 @@ func (alwaysWrap) evaluateEager() bool      { return true }
 func (alwaysWrap) alwaysInclude() bool      { return true }
 func (alwaysWrap) isMerge() bool            { return false }
 func (alwaysWrap) isDeepMerge() bool        { return false }
+func (alwaysWrap) isPrepend() bool          { return false }
+func (alwaysWrap) matchOnKeys() []string    { return nil }
 func (alwaysWrap) deferGroup() string       { return "" }
 
 // optionalWrap is excluded from full responses and from unrequested partial
@@ -54,6 +61,8 @@ func (optionalWrap) evaluateEager() bool      { return false }
 func (optionalWrap) alwaysInclude() bool      { return false }
 func (optionalWrap) isMerge() bool            { return false }
 func (optionalWrap) isDeepMerge() bool        { return false }
+func (optionalWrap) isPrepend() bool          { return false }
+func (optionalWrap) matchOnKeys() []string    { return nil }
 func (optionalWrap) deferGroup() string       { return "" }
 
 // deferWrap is like optional but also surfaces in the PageObject's
@@ -84,6 +93,8 @@ func (deferWrap) evaluateEager() bool      { return false }
 func (deferWrap) alwaysInclude() bool      { return false }
 func (deferWrap) isMerge() bool            { return false }
 func (deferWrap) isDeepMerge() bool        { return false }
+func (deferWrap) isPrepend() bool          { return false }
+func (deferWrap) matchOnKeys() []string    { return nil }
 func (d deferWrap) deferGroup() string     { return d.group }
 
 // mergeWrap marks a prop value for client-side array/object merging on
@@ -99,6 +110,8 @@ func (mergeWrap) evaluateEager() bool      { return true }
 func (mergeWrap) alwaysInclude() bool      { return false }
 func (mergeWrap) isMerge() bool            { return true }
 func (mergeWrap) isDeepMerge() bool        { return false }
+func (mergeWrap) isPrepend() bool          { return false }
+func (mergeWrap) matchOnKeys() []string    { return nil }
 func (mergeWrap) deferGroup() string       { return "" }
 
 // deepMergeWrap is like mergeWrap but signals recursive merging client-side.
@@ -113,7 +126,53 @@ func (deepMergeWrap) evaluateEager() bool      { return true }
 func (deepMergeWrap) alwaysInclude() bool      { return false }
 func (deepMergeWrap) isMerge() bool            { return false }
 func (deepMergeWrap) isDeepMerge() bool        { return true }
+func (deepMergeWrap) isPrepend() bool          { return false }
+func (deepMergeWrap) matchOnKeys() []string    { return nil }
 func (deepMergeWrap) deferGroup() string       { return "" }
+
+// prependWrap marks a value for client-side prepend on partial reloads.
+type prependWrap struct{ v any }
+
+// Prepend wraps a value that the client should prepend (instead of
+// append) to the existing client-side value on partial reloads.
+func Prepend(v any) propWrapper { return prependWrap{v: v} }
+
+func (p prependWrap) evaluate() (any, error) { return p.v, nil }
+func (prependWrap) evaluateEager() bool      { return true }
+func (prependWrap) alwaysInclude() bool      { return false }
+func (prependWrap) isMerge() bool            { return false }
+func (prependWrap) isDeepMerge() bool        { return false }
+func (prependWrap) isPrepend() bool          { return true }
+func (prependWrap) matchOnKeys() []string    { return nil }
+func (prependWrap) deferGroup() string       { return "" }
+
+// matchOnWrap declares one or more dotted key paths used by the client
+// to reconcile list items across partial reloads.
+type matchOnWrap struct {
+	v    any
+	keys []string
+}
+
+// MatchOn wraps a value (typically a list) and declares one or more
+// dotted key paths used by the client to reconcile items across partial
+// reloads (e.g. matching by "id" or "uuid"). Panics if no keys are given.
+func MatchOn(v any, keys ...string) propWrapper {
+	if len(keys) == 0 {
+		panic("inertia.MatchOn: at least one key path is required")
+	}
+	cp := make([]string, len(keys))
+	copy(cp, keys)
+	return matchOnWrap{v: v, keys: cp}
+}
+
+func (m matchOnWrap) evaluate() (any, error) { return m.v, nil }
+func (matchOnWrap) evaluateEager() bool      { return true }
+func (matchOnWrap) alwaysInclude() bool      { return false }
+func (matchOnWrap) isMerge() bool            { return false }
+func (matchOnWrap) isDeepMerge() bool        { return false }
+func (matchOnWrap) isPrepend() bool          { return false }
+func (m matchOnWrap) matchOnKeys() []string  { return m.keys }
+func (matchOnWrap) deferGroup() string       { return "" }
 
 // asWrapper returns w as a propWrapper if it is one, plus ok=true.
 func asWrapper(v any) (propWrapper, bool) {

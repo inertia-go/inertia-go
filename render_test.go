@@ -32,8 +32,8 @@ func TestRender_InitialHTML_EmbedsPageObject(t *testing.T) {
 		t.Errorf("Content-Type: %q", ct)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `data-page=`) {
-		t.Errorf("missing data-page attribute: %s", body)
+	if !strings.Contains(body, `<script data-page="app" type="application/json">`) {
+		t.Errorf("missing v3 script tag: %s", body)
 	}
 	if !strings.Contains(body, `Users/Index`) {
 		t.Errorf("missing component name: %s", body)
@@ -147,49 +147,68 @@ func TestRender_SharedProps_Merged(t *testing.T) {
 	}
 }
 
-func TestRender_InitialHTML_DataPageIsValidJSONAfterHTMLParse(t *testing.T) {
-	// Regression test: the data-page attribute must contain JSON that a
-	// browser-grade HTML parser can extract and JSON.parse. The attribute
-	// is single-quoted so JSON's double quotes don't terminate it; HTML
-	// entities (&amp;, &lt;, etc.) must be decoded before JSON parsing.
+func TestRender_InitialHTML_PageObjectIsValidJSONInsideScript(t *testing.T) {
+	// Regression: the script element with type="application/json" must
+	// carry valid JSON that survives the </script close-sequence escape.
 	i := newTestInertia(t)
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		i.Render(w, r, "Users/Index", Props{"users": []int{1, 2}})
+		// Prop value contains literal "</script>" bytes; renderer must
+		// escape them so the script block does not terminate early.
+		i.Render(w, r, "Users/Index", Props{
+			"hostile": "</script><script>alert(1)</script>",
+		})
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	// Locate data-page='...' and extract through to the matching single quote.
-	const marker = `data-page='`
-	idx := strings.Index(body, marker)
-	if idx < 0 {
-		t.Fatalf("data-page='...' marker not found in body: %s", body)
+	const open = `<script data-page="app" type="application/json">`
+	const close = `</script>`
+	openIdx := strings.Index(body, open)
+	if openIdx < 0 {
+		t.Fatalf("script open tag not found: %s", body)
 	}
-	rest := body[idx+len(marker):]
-	end := strings.IndexByte(rest, '\'')
-	if end < 0 {
-		t.Fatalf("no closing single quote for data-page in body: %s", body)
+	rest := body[openIdx+len(open):]
+	closeIdx := strings.Index(rest, close)
+	if closeIdx < 0 {
+		t.Fatalf("script close tag not found: %s", body)
 	}
-	rawAttr := rest[:end]
-
-	// html/template entity-encodes the JSON when interpolating into HTML.
-	decoded := strings.NewReplacer(
-		"&#34;", `"`,
-		"&quot;", `"`,
-		"&amp;", "&",
-		"&lt;", "<",
-		"&gt;", ">",
-		"&#43;", "+",
-	).Replace(rawAttr)
+	rawJSON := rest[:closeIdx]
+	if strings.Contains(rawJSON, "</script>") {
+		t.Fatalf("inline script payload must not contain literal </script>: %s", rawJSON)
+	}
 
 	var page PageObject
-	if err := json.Unmarshal([]byte(decoded), &page); err != nil {
-		t.Fatalf("data-page is not valid JSON after HTML decode: %v\nraw=%q\ndecoded=%q", err, rawAttr, decoded)
+	if err := json.Unmarshal([]byte(rawJSON), &page); err != nil {
+		t.Fatalf("inline script JSON does not parse: %v\nraw=%q", err, rawJSON)
 	}
-	if page.Component != "Users/Index" {
-		t.Errorf("component: %q", page.Component)
+	if page.Props["hostile"] != "</script><script>alert(1)</script>" {
+		t.Errorf("hostile prop did not round-trip: %v", page.Props["hostile"])
+	}
+}
+
+func TestRenderScriptSafe_EscapesCloseTag(t *testing.T) {
+	// Raw input where < was NOT pre-escaped (e.g. a future caller passing
+	// json.RawMessage or using an encoder with HTMLEscape disabled).
+	raw := []byte(`{"h":"</script><script>alert(1)"}`)
+	out := renderScriptSafe(raw)
+	// Strip the leading <script ...> wrapper so we only inspect the inline payload.
+	const open = `<script data-page="app" type="application/json">`
+	if !strings.HasPrefix(out, open) {
+		t.Fatalf("missing open tag: %s", out)
+	}
+	payload := out[len(open):]
+	closeIdx := strings.Index(payload, `</script>`)
+	if closeIdx < 0 {
+		t.Fatalf("missing closing tag: %s", out)
+	}
+	inline := payload[:closeIdx]
+	if strings.Contains(inline, `</script`) {
+		t.Fatalf("renderScriptSafe did not neutralize </script in raw input; inline=%q", inline)
+	}
+	if !strings.Contains(inline, `\u003c/script`) {
+		t.Fatalf("expected \\u003c/script escape in inline payload; got %q", inline)
 	}
 }
 
@@ -233,7 +252,7 @@ func TestRender_SSREnabled_InjectsHeadAndBody(t *testing.T) {
 	if !strings.Contains(out, `<div id="app">SSR-rendered</div>`) {
 		t.Errorf("SSR body missing: %s", out)
 	}
-	if strings.Contains(out, `data-page=`) {
+	if strings.Contains(out, `<script data-page="app"`) {
 		t.Errorf("CSR fallback body should not be present when SSR succeeded: %s", out)
 	}
 
@@ -275,8 +294,8 @@ func TestRender_SSRFails_FailSoft_FallsBackToCSR(t *testing.T) {
 	i.Render(w, r, "Dashboard", Props{})
 
 	out := w.Body.String()
-	if !strings.Contains(out, `data-page=`) {
-		t.Errorf("expected CSR fallback (data-page attribute), got: %s", out)
+	if !strings.Contains(out, `<script data-page="app"`) {
+		t.Errorf("expected CSR fallback (script tag), got: %s", out)
 	}
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -318,7 +337,7 @@ func TestRender_SSRFails_SSRRequired_RoutesToErrorHandler(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", w.Code)
 	}
-	if strings.Contains(w.Body.String(), `data-page=`) {
+	if strings.Contains(w.Body.String(), `<script data-page="app"`) {
 		t.Errorf("CSR fallback should not be rendered in fail-hard mode: %s", w.Body.String())
 	}
 }

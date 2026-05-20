@@ -72,7 +72,7 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - `(*Inertia).Render(w, r, component, props)`
 - `(*Inertia).Redirect(w, r, url)` / `Location` / `Back`
 - `(*Inertia).Share(key, fn)` / `ShareValue(key, value)`
-- Prop wrappers: `inertia.Always`, `Optional`, `Defer`, `Merge`, `DeepMerge`
+- Prop wrappers: `inertia.Always`, `Optional`, `Defer`, `Merge`, `DeepMerge`, `Prepend`, `MatchOn`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
 - Vite: `vite.Load`, `vite.MustLoad`, `vite.Dev` (satisfies `inertia.ViteHelper`)
@@ -95,6 +95,10 @@ without backward compatibility for v1 or v2.
 | 302→303 conversion for PUT/PATCH/DELETE | ✅ |
 | `encryptHistory` / `clearHistory` page meta | ✅ |
 | `mergeProps` / `deepMergeProps` / `deferredProps` | ✅ |
+| `prependProps` (v3 prepend) | ✅ |
+| `matchPropsOn` (v3 list reconciliation) | ✅ |
+| `sharedProps` (v3 shared-keys metadata) | ✅ |
+| `scrollProps` / `onceProps` / `rescuedProps` | Reserved (always empty in v0.4; landing in v0.5) |
 | SSR HTTP client | ✅ |
 | Vite manifest helper | ✅ |
 | Precognition | Out of scope |
@@ -167,6 +171,26 @@ errors through `Config.ErrorHandler` (default: 500) instead.
 Process management for the Node SSR service is out of scope — run
 it under systemd, supervisord, a k8s sidecar, or whatever fits your
 stack.
+
+## Cookie session lifecycle
+
+`session.CookieStore` buffers flash/error writes per HTTP request and
+emits a single `Set-Cookie` at the end. The buffer is drained by
+`inertia.Middleware` via a deferred hook, so apps using `CookieStore`
+MUST mount the middleware:
+
+```go
+i, _ := inertia.New(inertia.Config{
+    RootView:   "app.html",
+    TemplateFS: os.DirFS("views"),
+    Session:    store,
+})
+
+http.ListenAndServe(":8080", i.Middleware(mux))  // required for CookieStore
+```
+
+`session.MemoryStore` and `session.NewNoop()` are not affected; they
+write eagerly per call.
 
 ## Framework Adapters
 

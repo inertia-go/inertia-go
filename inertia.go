@@ -34,6 +34,16 @@ type SessionStore interface {
 	TakeMessages(w http.ResponseWriter, r *http.Request) (map[string]any, error)
 }
 
+// SessionFlusher is an optional capability a SessionStore may implement
+// to defer writing the response cookie until the end of the HTTP
+// request. inertia.Middleware calls FlushResponse via a deferred hook
+// so multiple Flash*/Take* operations in a single response accumulate
+// into one Set-Cookie. Stores that don't implement this interface
+// continue to write eagerly per call.
+type SessionFlusher interface {
+	FlushResponse(w http.ResponseWriter) error
+}
+
 // RootData is passed to the root template (default or RootRender hook).
 type RootData struct {
 	InertiaHead template.HTML
@@ -65,7 +75,7 @@ type ViteHelper interface {
 // Render is invoked once per initial HTML response — Inertia XHR
 // requests skip SSR. The page argument is the already-serialized
 // PageObject, identical to the bytes that would otherwise be embedded
-// in <div id="app" data-page='...'>.
+// inside the <script data-page="app" type="application/json"> element.
 //
 // The returned head and body are injected verbatim into the root
 // template as template.HTML, bypassing html/template auto-escaping.
@@ -234,4 +244,17 @@ func (i *Inertia) ShareValue(key string, v any) {
 // ShareEval is an alias for Share kept for parity with the design spec.
 func (i *Inertia) ShareEval(key string, fn func(r *http.Request) any) {
 	i.Share(key, fn)
+}
+
+// flushSession invokes the session store's FlushResponse hook if the
+// store implements SessionFlusher. Called via defer at the end of every
+// request handled by Middleware so accumulators can emit their writes.
+func (i *Inertia) flushSession(w http.ResponseWriter) {
+	fl, ok := i.cfg.Session.(SessionFlusher)
+	if !ok {
+		return
+	}
+	if err := fl.FlushResponse(w); err != nil {
+		i.logger.Warn("inertia: session flush failed", "err", err)
+	}
 }

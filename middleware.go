@@ -33,6 +33,7 @@ const (
 // errors and messages) and setting Vary: X-Inertia on the response.
 func (i *Inertia) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer i.flushSession(w)
 		info := parseRequestInfo(r)
 
 		// Pull errors and messages from the session (read-and-clear).

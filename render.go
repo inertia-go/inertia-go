@@ -1,10 +1,12 @@
 package inertia
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -20,12 +22,26 @@ type PageObject struct {
 	MergeProps     []string            `json:"mergeProps,omitempty"`
 	DeepMergeProps []string            `json:"deepMergeProps,omitempty"`
 	DeferredProps  map[string][]string `json:"deferredProps,omitempty"`
+
+	// v0.4 — added with their populating code paths.
+	PrependProps []string `json:"prependProps,omitempty"`
+	MatchPropsOn []string `json:"matchPropsOn,omitempty"`
+	SharedProps  []string `json:"sharedProps,omitempty"`
+
+	// Reserved for v0.5: declared on the struct so a future minor release
+	// adding wrappers does not change the public JSON shape. v0.4 code
+	// paths never write to them.
+	ScrollProps  map[string]map[string]any `json:"scrollProps,omitempty"`
+	OnceProps    map[string]map[string]any `json:"onceProps,omitempty"`
+	RescuedProps []string                  `json:"rescuedProps,omitempty"`
 }
 
 // Render writes an Inertia response for the given component and props.
 // If the request is an Inertia AJAX request (X-Inertia: true), the
 // response is JSON; otherwise it is the initial HTML document with the
-// PageObject embedded in <div id="app" data-page="...">.
+// PageObject embedded in a <script data-page="app"
+// type="application/json"> element followed by an empty <div id="app">
+// mount node (Inertia v3 shape).
 func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component string, props Props) {
 	info := FromRequest(r)
 	currentVer := i.currentVersion(r)
@@ -41,7 +57,8 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	merged := i.mergeAllProps(r, props)
 	keep := filterKeys(merged, info.PartialComponent, component, info.PartialData, info.PartialExcept)
 
-	evaluated, mergeKeys, deepMergeKeys, deferred, err := i.evaluatePropsFor(r, merged, keep)
+	isPartial := info.PartialComponent != "" && info.PartialComponent == component
+	resolved, err := i.evaluatePropsFor(r, merged, keep, isPartial)
 	if err != nil {
 		i.cfg.ErrorHandler(w, r,
 			fmt.Errorf("%w: %w", ErrPropEvaluationFailed, err))
@@ -50,14 +67,17 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 
 	page := PageObject{
 		Component:      component,
-		Props:          evaluated,
+		Props:          resolved.values,
 		URL:            r.URL.RequestURI(),
 		Version:        currentVer,
 		EncryptHistory: i.cfg.EncryptHistory,
 		ClearHistory:   i.cfg.ClearHistory,
-		MergeProps:     mergeKeys,
-		DeepMergeProps: deepMergeKeys,
-		DeferredProps:  deferred,
+		MergeProps:     resolved.mergeKeys,
+		DeepMergeProps: resolved.deepMergeKeys,
+		DeferredProps:  resolved.deferred,
+		PrependProps:   resolved.prependKeys,
+		MatchPropsOn:   resolved.matchPropsOn,
+		SharedProps:    i.sharedKeysSnapshot(),
 	}
 
 	if currentVer != "" {
@@ -69,6 +89,32 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		return
 	}
 	i.writeHTML(w, r, page)
+}
+
+// sharedKeysSnapshot returns the sorted, deduplicated keys of values
+// registered via Share / ShareValue. errors/flash injected by
+// mergeAllProps are intentionally excluded: v3 reserves the
+// shared-props notion for explicitly registered keys.
+func (i *Inertia) sharedKeysSnapshot() []string {
+	i.sharedMu.RLock()
+	defer i.sharedMu.RUnlock()
+
+	seen := make(map[string]bool, len(i.sharedStatic)+len(i.sharedFuncs))
+	for k := range i.sharedStatic {
+		seen[k] = true
+	}
+	for k := range i.sharedFuncs {
+		seen[k] = true
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {
@@ -101,38 +147,70 @@ func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {
 	return out
 }
 
-// evaluatePropsFor evaluates the subset of props identified by keep,
-// returning the final value map plus the merge/deepMerge/deferred markers
-// that go into the PageObject.
-func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string) (
-	map[string]any, []string, []string, map[string][]string, error,
-) {
+// resolvedProps bundles the evaluated prop values with the per-marker key
+// lists that populate the PageObject. Returned by evaluatePropsFor.
+type resolvedProps struct {
+	values        map[string]any
+	mergeKeys     []string
+	deepMergeKeys []string
+	prependKeys   []string
+	matchPropsOn  []string
+	deferred      map[string][]string
+}
+
+// evaluatePropsFor evaluates the subset of props identified by keep and
+// returns the final value map alongside the per-marker key lists that
+// populate the PageObject.
+//
+// Deferred metadata is collected from the entire merged-props map on
+// non-partial responses (so the v3 client sees deferredProps on initial
+// HTML) but is left empty on partial responses (the client uses metadata
+// from the initial response, not subsequent partials).
+func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, isPartial bool) (resolvedProps, error) {
+	_ = r // reserved for future Defer-with-context evaluation.
+
 	out := make(map[string]any, len(keep))
 	var (
 		mu          sync.Mutex
 		firstErr    error
 		mergeKeys   []string
 		deepKeys    []string
-		deferredMap = map[string][]string{}
+		prependKeys []string
+		matchOn     []string
 		wg          sync.WaitGroup
 	)
-	_ = r // r reserved for future Defer-with-context evaluation.
+
+	deferredMap := map[string][]string{}
+	if !isPartial {
+		for k, v := range all {
+			if w, ok := asWrapper(v); ok {
+				if g := w.deferGroup(); g != "" {
+					deferredMap[g] = append(deferredMap[g], k)
+				}
+			}
+		}
+		for g := range deferredMap {
+			sort.Strings(deferredMap[g])
+		}
+	}
 
 	for _, k := range keep {
 		v, ok := all[k]
 		if !ok {
 			continue
 		}
-		wrap, isWrap := asWrapper(v)
-		if isWrap {
+		if wrap, isWrap := asWrapper(v); isWrap {
 			if wrap.isMerge() {
 				mergeKeys = append(mergeKeys, k)
 			}
 			if wrap.isDeepMerge() {
 				deepKeys = append(deepKeys, k)
 			}
-			if g := wrap.deferGroup(); g != "" {
-				deferredMap[g] = append(deferredMap[g], k)
+			if wrap.isPrepend() {
+				prependKeys = append(prependKeys, k)
+			}
+			for _, mk := range wrap.matchOnKeys() {
+				matchOn = append(matchOn, k+"."+mk)
 			}
 		}
 		wg.Add(1)
@@ -150,12 +228,23 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string) (
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return nil, nil, nil, nil, firstErr
+		return resolvedProps{}, firstErr
 	}
+	sort.Strings(mergeKeys)
+	sort.Strings(deepKeys)
+	sort.Strings(prependKeys)
+	sort.Strings(matchOn)
 	if len(deferredMap) == 0 {
 		deferredMap = nil
 	}
-	return out, mergeKeys, deepKeys, deferredMap, nil
+	return resolvedProps{
+		values:        out,
+		mergeKeys:     mergeKeys,
+		deepMergeKeys: deepKeys,
+		prependKeys:   prependKeys,
+		matchPropsOn:  matchOn,
+		deferred:      deferredMap,
+	}, nil
 }
 
 func evaluateOne(v any) (any, error) {
@@ -177,6 +266,24 @@ func (i *Inertia) writeJSON(w http.ResponseWriter, r *http.Request, page PageObj
 	_, _ = w.Write(body)
 }
 
+var (
+	closeScriptToken   = []byte("</script")
+	closeScriptEscaped = []byte(`\u003c/script`)
+)
+
+// renderScriptSafe returns the v3 initial-HTML body: a <script
+// data-page="app" type="application/json"> element carrying the
+// PageObject JSON, followed by the empty <div id="app"> mount node.
+// Any literal </script byte sequence in the payload is rewritten to the
+// JSON-legal unicode escape </script so a hostile prop value cannot
+// terminate the script block early. (json.Marshal already escapes < to
+// <, so this is defense-in-depth for callers that pass raw bytes.)
+func renderScriptSafe(body []byte) string {
+	safe := bytes.ReplaceAll(body, closeScriptToken, closeScriptEscaped)
+	return `<script data-page="app" type="application/json">` + string(safe) +
+		`</script>` + `<div id="app"></div>`
+}
+
 func (i *Inertia) writeHTML(w http.ResponseWriter, r *http.Request, page PageObject) {
 	body, err := json.Marshal(page)
 	if err != nil {
@@ -185,7 +292,7 @@ func (i *Inertia) writeHTML(w http.ResponseWriter, r *http.Request, page PageObj
 	}
 	data := RootData{
 		InertiaHead: "",
-		InertiaBody: template.HTML(fmt.Sprintf(`<div id="app" data-page='%s'></div>`, string(body))),
+		InertiaBody: template.HTML(renderScriptSafe(body)),
 		Component:   page.Component,
 		URL:         page.URL,
 		Version:     page.Version,

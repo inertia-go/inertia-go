@@ -3,49 +3,59 @@ package inertia
 // filterKeys returns the subset of props keys that must be included in the
 // current response, applying Inertia v3 partial-reload rules.
 //
-// Parameters:
-//   - props:            the full prop map.
-//   - reqComponent:     X-Inertia-Partial-Component (empty for non-partial).
-//   - currentComponent: the component being rendered (Render's `component` arg).
-//   - partialData:      X-Inertia-Partial-Data values.
-//   - partialExcept:    X-Inertia-Partial-Except values.
-//
 // Rules:
-//   - When reqComponent != currentComponent (or is empty), the request is
-//     treated as a full response: every prop whose evaluateEager() returns
-//     true is kept. Bare values count as eager.
-//   - Otherwise, keep = (partialData ∪ alwaysInclude) − partialExcept.
-//     Keys in partialData that do not exist in props are silently ignored.
+//   - Non-partial (reqComponent empty or != currentComponent): keep all
+//     keys whose evaluateEager() is true; partialExcept is ignored.
+//   - Partial with non-empty partialData: keep (partialData ∪ alwaysInclude)
+//     − partialExcept.
+//   - Partial with empty partialData (only Partial-Except or neither
+//     header set): keep (all eager ∪ alwaysInclude) − partialExcept.
 func filterKeys(props Props, reqComponent, currentComponent string,
 	partialData, partialExcept []string) []string {
 
 	isPartial := reqComponent != "" && reqComponent == currentComponent
+	excluded := setOf(partialExcept)
 
 	if !isPartial {
-		out := make([]string, 0, len(props))
-		for k, v := range props {
-			if isEagerEvaluated(v) {
-				out = append(out, k)
+		// partialExcept is intentionally ignored for non-partial responses.
+		return collect(props, func(_ string, v any) bool {
+			return isEagerEvaluated(v)
+		})
+	}
+
+	if len(partialData) == 0 {
+		return collect(props, func(k string, v any) bool {
+			if excluded[k] {
+				return false
 			}
+			return isEagerEvaluated(v) || alwaysIncluded(v)
+		})
+	}
+
+	requested := setOf(partialData)
+	return collect(props, func(k string, v any) bool {
+		if excluded[k] {
+			return false
 		}
-		return out
-	}
+		return requested[k] || alwaysIncluded(v)
+	})
+}
 
-	requested := make(map[string]bool, len(partialData))
-	for _, k := range partialData {
-		requested[k] = true
+func setOf(s []string) map[string]bool {
+	if len(s) == 0 {
+		return nil
 	}
-	excluded := make(map[string]bool, len(partialExcept))
-	for _, k := range partialExcept {
-		excluded[k] = true
+	m := make(map[string]bool, len(s))
+	for _, k := range s {
+		m[k] = true
 	}
+	return m
+}
 
+func collect(props Props, pred func(k string, v any) bool) []string {
 	out := make([]string, 0, len(props))
 	for k, v := range props {
-		if excluded[k] {
-			continue
-		}
-		if requested[k] || alwaysIncluded(v) {
+		if pred(k, v) {
 			out = append(out, k)
 		}
 	}

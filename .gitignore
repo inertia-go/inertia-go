@@ -16,3 +16,6 @@ docs/superpowers/
 examples/*/tmp/
 examples/*/bin/
 examples/basic/basic
+examples/vite/vite
+examples/ssr/ssr
+examples/partial-reload/partial-reload

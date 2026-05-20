@@ -13,7 +13,8 @@ go run .
 Without a Node service running on `127.0.0.1:13714`:
 
 - <http://localhost:8080/> serves an HTML page with the CSR fallback
-  (`<div id="app" data-page='...'>`). The stderr log contains one
+  (`<script type="application/json" data-page="app">…</script>` plus
+  `<div id="app"></div>`). The stderr log contains one
   `slog.Warn` line per request: `inertia: ssr render failed; falling
   back to CSR`.
 - <http://localhost:8080/strict> returns HTTP 500. The default
