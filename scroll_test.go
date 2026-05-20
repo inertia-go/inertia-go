@@ -145,6 +145,16 @@ func TestScroll_DefaultsWrapperAndLazy(t *testing.T) {
 	}
 }
 
+func TestScroll_NilDataPanics(t *testing.T) {
+	t.Cleanup(resetScrollAdapters)
+	defer func() {
+		if recover() == nil {
+			t.Error("Scroll with nil data callback must panic")
+		}
+	}()
+	Scroll(map[string]any{}, nil)
+}
+
 func TestScroll_WithWrapperAndPageName(t *testing.T) {
 	t.Cleanup(resetScrollAdapters)
 	sp := Scroll(map[string]any{}, func() any { return nil },

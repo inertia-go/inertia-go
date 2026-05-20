@@ -154,6 +154,9 @@ type scrollProp struct {
 // props.<key>.<wrapper> (wrapper default "data"), <key>.<wrapper> is listed
 // in mergeProps, and the derived config is emitted under scrollProps.<key>.
 func Scroll(metadata any, data func() any, opts ...ScrollOption) *scrollProp {
+	if data == nil {
+		panic("inertia.Scroll: data callback must not be nil")
+	}
 	sp := &scrollProp{metadata: metadata, dataFn: data, wrapper: "data"}
 	for _, o := range opts {
 		o(sp)
@@ -161,7 +164,7 @@ func Scroll(metadata any, data func() any, opts ...ScrollOption) *scrollProp {
 	return sp
 }
 
-// ScrollOption configures a Scroll call.
+// ScrollOption is a functional option for Scroll.
 type ScrollOption func(*scrollProp)
 
 // WithPageName overrides the page query-param name. Multiple scroll
