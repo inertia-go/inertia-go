@@ -75,6 +75,8 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - Prop wrappers: `inertia.Always`, `Optional`, `Defer`, `Merge`, `DeepMerge`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
+- Vite: `vite.Load`, `vite.MustLoad`, `vite.Dev` (satisfies `inertia.ViteHelper`)
+- SSR: `ssr.NewHTTP` (satisfies `inertia.SSRClient`)
 
 ## Protocol Conformance
 
@@ -93,8 +95,8 @@ without backward compatibility for v1 or v2.
 | 302→303 conversion for PUT/PATCH/DELETE | ✅ |
 | `encryptHistory` / `clearHistory` page meta | ✅ |
 | `mergeProps` / `deepMergeProps` / `deferredProps` | ✅ |
-| SSR HTTP client | v0.3.0 |
-| Vite manifest helper | v0.2.0 |
+| SSR HTTP client | ✅ |
+| Vite manifest helper | ✅ |
 | Precognition | Out of scope |
 
 ## Vite Manifest
