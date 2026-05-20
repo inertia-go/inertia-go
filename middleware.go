@@ -18,6 +18,10 @@ type RequestInfo struct {
 	ErrorBag          string
 	ExceptOnceProps   []string
 	ScrollMergeIntent string
+	// IsPrefetch reports whether the client sent Purpose: prefetch. The v3
+	// protocol assigns no mandatory server behavior; handlers may use it to
+	// skip expensive side effects on speculative prefetch requests.
+	IsPrefetch bool
 }
 
 type ctxKey int
@@ -96,6 +100,7 @@ func parseRequestInfo(r *http.Request) RequestInfo {
 		ErrorBag:          r.Header.Get("X-Inertia-Error-Bag"),
 		ExceptOnceProps:   splitCSV(r.Header.Get("X-Inertia-Except-Once-Props")),
 		ScrollMergeIntent: r.Header.Get("X-Inertia-Infinite-Scroll-Merge-Intent"),
+		IsPrefetch:        r.Header.Get("Purpose") == "prefetch",
 	}
 }
 
