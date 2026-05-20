@@ -62,3 +62,4 @@ partial-reload contract in action.
 
 - [Main package partial-reload docs (godoc)](https://pkg.go.dev/github.com/inertia-go/inertia-go#Always)
 - [Inertia.js partial reload protocol](https://inertiajs.com/partial-reloads)
+- [`Prepend` wrapper (godoc)](https://pkg.go.dev/github.com/inertia-go/inertia-go#Prepend) — prepends new items to the client-side list instead of appending
