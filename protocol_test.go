@@ -349,6 +349,49 @@ func TestProtocol_OnceProps_FirstLoadAndCached(t *testing.T) {
 	}
 }
 
+// TestProtocol_OnceProps_AsAliasCacheSkip verifies the round-trip for an
+// aliased once prop: Once(fn).As("billing") registers onceProps["billing"],
+// and when the client reports it cached via X-Inertia-Except-Once-Props:
+// billing, the server skips re-resolving it (absent from props) while still
+// emitting the onceProps["billing"] metadata. Without the except header the
+// prop is present.
+func TestProtocol_OnceProps_AsAliasCacheSkip(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	mk := func(except string) PageObject {
+		h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			i.Render(w, r, "Billing", Props{
+				"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }).As("billing"),
+			})
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+		req.Header.Set("X-Inertia", "true")
+		if except != "" {
+			req.Header.Set("X-Inertia-Except-Once-Props", except)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var p PageObject
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	first := mk("")
+	if _, ok := first.Props["plans"]; !ok {
+		t.Error("without except header, aliased once prop must be present in props")
+	}
+	if got := first.OnceProps["billing"]; got.Prop != "billing" {
+		t.Errorf("onceProps[billing] = %+v, want prop=billing", got)
+	}
+	cached := mk("billing")
+	if _, ok := cached.Props["plans"]; ok {
+		t.Error("aliased once prop reported cached via alias must be omitted from props")
+	}
+	if _, ok := cached.OnceProps["billing"]; !ok {
+		t.Error("onceProps[billing] metadata must persist on cached response")
+	}
+}
+
 // TestProtocol_OnceProps_ExplicitPartialForcesRefresh verifies the v3 rule
 // that an explicit partial reload (X-Inertia-Partial-Data lists the key)
 // re-resolves a once prop even when the client also reports it cached via

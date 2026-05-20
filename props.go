@@ -124,6 +124,8 @@ func (b *propBuilder) Prepend(paths ...string) *propBuilder {
 
 // Append marks the given dotted sub-paths (relative to the prop key) for
 // client-side append on partial reloads. Requires Merge or DeepMerge.
+// A no-arg Append is a no-op: root append is already the default merge
+// behavior, so only non-empty sub-paths are emitted.
 func (b *propBuilder) Append(paths ...string) *propBuilder {
 	b.requireMergeFamily("Append")
 	if len(paths) == 0 {

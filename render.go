@@ -196,7 +196,7 @@ type resolvedProps struct {
 	scrollProps   map[string]ScrollConfig
 }
 
-// propMarkers accumulates the per-wrapper key lists that populate the
+// propMarkers accumulates the per-prop key lists that populate the
 // PageObject (mergeProps, deepMergeProps, prependProps, matchPropsOn,
 // onceProps, scrollProps). Collected synchronously in the keep-loop before
 // evaluation fans out.
@@ -267,7 +267,7 @@ func (m *propMarkers) collectOnce(key string, b *propBuilder, exceptOnce, reques
 		exp = &ms
 	}
 	m.onceProps[onceKey] = OnceConfig{Prop: onceKey, ExpiresAt: exp}
-	return exceptOnce[key] && !requested[key] && !b.onceFresh
+	return exceptOnce[onceKey] && !requested[key] && !b.onceFresh
 }
 
 func joinPath(key, sub string) string {

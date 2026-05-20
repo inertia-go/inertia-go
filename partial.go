@@ -5,7 +5,7 @@ package inertia
 //
 // Rules:
 //   - Non-partial (reqComponent empty or != currentComponent): keep all
-//     keys whose evaluateEager() is true; partialExcept is ignored.
+//     keys whose isEagerEvaluated(v) is true; partialExcept is ignored.
 //   - Partial with non-empty partialData: keep (partialData ∪ alwaysInclude)
 //     − partialExcept.
 //   - Partial with empty partialData (only Partial-Except or neither
