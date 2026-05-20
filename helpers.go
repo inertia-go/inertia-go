@@ -86,3 +86,23 @@ func Flash(r *http.Request) *FlashCollector {
 	}
 	return newFlashBag()
 }
+
+// preserveFragmentHolder carries a per-request *bool override for the
+// page object's preserveFragment flag. Middleware installs an empty
+// holder; SetPreserveFragment writes into it; Render reads it. A nil
+// value means "use the Config default".
+type preserveFragmentHolder struct {
+	mu  sync.Mutex
+	val *bool
+}
+
+// SetPreserveFragment overrides preserveFragment for the current response,
+// in either direction, winning over Config.PreserveFragment. No-op if the
+// request did not pass through Middleware.
+func SetPreserveFragment(r *http.Request, v bool) {
+	if h, ok := r.Context().Value(ctxKeyPreserveFragment).(*preserveFragmentHolder); ok {
+		h.mu.Lock()
+		h.val = &v
+		h.mu.Unlock()
+	}
+}

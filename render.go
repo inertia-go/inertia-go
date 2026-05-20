@@ -82,19 +82,20 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	}
 
 	page := PageObject{
-		Component:      component,
-		Props:          resolved.values,
-		URL:            r.URL.RequestURI(),
-		Version:        currentVer,
-		EncryptHistory: i.cfg.EncryptHistory,
-		ClearHistory:   i.cfg.ClearHistory,
-		MergeProps:     resolved.mergeKeys,
-		DeepMergeProps: resolved.deepMergeKeys,
-		DeferredProps:  resolved.deferred,
-		PrependProps:   resolved.prependKeys,
-		MatchPropsOn:   resolved.matchPropsOn,
-		SharedProps:    i.sharedKeysSnapshot(),
-		RescuedProps:   resolved.rescued,
+		Component:        component,
+		Props:            resolved.values,
+		URL:              r.URL.RequestURI(),
+		Version:          currentVer,
+		EncryptHistory:   i.cfg.EncryptHistory,
+		ClearHistory:     i.cfg.ClearHistory,
+		MergeProps:       resolved.mergeKeys,
+		DeepMergeProps:   resolved.deepMergeKeys,
+		DeferredProps:    resolved.deferred,
+		PrependProps:     resolved.prependKeys,
+		MatchPropsOn:     resolved.matchPropsOn,
+		SharedProps:      i.sharedKeysSnapshot(),
+		RescuedProps:     resolved.rescued,
+		PreserveFragment: i.resolvePreserveFragment(r),
 	}
 
 	if currentVer != "" {
@@ -106,6 +107,20 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		return
 	}
 	i.writeHTML(w, r, page)
+}
+
+// resolvePreserveFragment returns the per-request override if one was set
+// via SetPreserveFragment, otherwise the Config default.
+func (i *Inertia) resolvePreserveFragment(r *http.Request) bool {
+	if h, ok := r.Context().Value(ctxKeyPreserveFragment).(*preserveFragmentHolder); ok {
+		h.mu.Lock()
+		v := h.val
+		h.mu.Unlock()
+		if v != nil {
+			return *v
+		}
+	}
+	return i.cfg.PreserveFragment
 }
 
 // sharedKeysSnapshot returns the sorted, deduplicated keys of values

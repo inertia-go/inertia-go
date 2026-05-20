@@ -26,6 +26,7 @@ const (
 	ctxKeyFlashBag
 	ctxKeySessionErrors
 	ctxKeySessionFlash
+	ctxKeyPreserveFragment
 )
 
 // Middleware returns an http.Handler that wraps next, populating Inertia
@@ -67,11 +68,13 @@ func (i *Inertia) Middleware(next http.Handler) http.Handler {
 		// Handler-local collectors (filled by ValidationErrors/Flash helpers).
 		errBag := newErrorBag()
 		flBag := newFlashBag()
+		pfHolder := &preserveFragmentHolder{}
 
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, ctxKeyRequestInfo, info)
 		ctx = context.WithValue(ctx, ctxKeyErrorBag, errBag)
 		ctx = context.WithValue(ctx, ctxKeyFlashBag, flBag)
+		ctx = context.WithValue(ctx, ctxKeyPreserveFragment, pfHolder)
 		ctx = context.WithValue(ctx, ctxKeySessionErrors, sessErrors)
 		ctx = context.WithValue(ctx, ctxKeySessionFlash, sessFlash)
 

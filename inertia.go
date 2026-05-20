@@ -116,6 +116,10 @@ type Config struct {
 	EncryptHistory bool
 	ClearHistory   bool
 
+	// PreserveFragment is the default for the page object's preserveFragment
+	// flag. Override per-request with inertia.SetPreserveFragment(r, bool).
+	PreserveFragment bool
+
 	// Session is required when using errors or flash (which the package
 	// auto-injects on every Render). Pass session.NewNoop() to opt out.
 	Session SessionStore
