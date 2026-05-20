@@ -144,3 +144,56 @@ func TestPrecognition_NonPrecognitionPassesThrough(t *testing.T) {
 		t.Errorf("status = %d, want 418 — Precognition must not write on non-precog", rec.Code)
 	}
 }
+
+func TestPrecognition_NamedErrorBag(t *testing.T) {
+	i := newTestInertia(t)
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ValidationErrors(r).Bag("signup").Add("email", "invalid")
+		i.Precognition(w, r)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/submit", nil)
+	req.Header.Set("Precognition", "true")
+	req.Header.Set("X-Inertia-Error-Bag", "signup")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (errors in the named bag)", rec.Code)
+	}
+	var body map[string]map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v\n%s", err, rec.Body.String())
+	}
+	if body["errors"]["email"] != "invalid" {
+		t.Errorf("named-bag error not read back: %v", body)
+	}
+}
+
+func TestPrecognition_CustomErrorsPropKey(t *testing.T) {
+	i, err := New(Config{Session: stubSession{}, ErrorsPropKey: "validationErrors"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ValidationErrors(r).Add("name", "required")
+		i.Precognition(w, r)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/submit", nil)
+	req.Header.Set("Precognition", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	var body map[string]map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v\n%s", err, rec.Body.String())
+	}
+	if _, ok := body["errors"]; ok {
+		t.Errorf("422 body must use the custom ErrorsPropKey, not \"errors\": %v", body)
+	}
+	if body["validationErrors"]["name"] != "required" {
+		t.Errorf("422 body = %v, want validationErrors.name=required", body)
+	}
+}
