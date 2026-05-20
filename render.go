@@ -77,6 +77,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		DeferredProps:  resolved.deferred,
 		PrependProps:   resolved.prependKeys,
 		MatchPropsOn:   resolved.matchPropsOn,
+		SharedProps:    i.sharedKeysSnapshot(),
 	}
 
 	if currentVer != "" {
@@ -88,6 +89,32 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		return
 	}
 	i.writeHTML(w, r, page)
+}
+
+// sharedKeysSnapshot returns the sorted, deduplicated keys of values
+// registered via Share / ShareValue. errors/flash injected by
+// mergeAllProps are intentionally excluded: v3 reserves the
+// shared-props notion for explicitly registered keys.
+func (i *Inertia) sharedKeysSnapshot() []string {
+	i.sharedMu.RLock()
+	defer i.sharedMu.RUnlock()
+
+	seen := make(map[string]bool, len(i.sharedStatic)+len(i.sharedFuncs))
+	for k := range i.sharedStatic {
+		seen[k] = true
+	}
+	for k := range i.sharedFuncs {
+		seen[k] = true
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {

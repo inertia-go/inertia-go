@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -212,6 +213,34 @@ func TestProtocol_PageObject_HasV3Fields(t *testing.T) {
 	} {
 		if strings.Contains(js, tag) {
 			t.Errorf("zero-value PageObject must not emit %q (need omitempty): %s", tag, js)
+		}
+	}
+}
+
+func TestProtocol_SharedPropsListed(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	i.ShareValue("appName", "Acme")
+	i.Share("auth", func(_ *http.Request) any { return map[string]any{"id": 1} })
+
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Home", Props{"localOnly": 1})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"appName", "auth"}
+	if !reflect.DeepEqual(page.SharedProps, want) {
+		t.Errorf("sharedProps: got %v, want %v", page.SharedProps, want)
+	}
+	for _, k := range page.SharedProps {
+		if k == "errors" || k == "flash" || k == "localOnly" {
+			t.Errorf("sharedProps must not include %q: %v", k, page.SharedProps)
 		}
 	}
 }
