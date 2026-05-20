@@ -176,6 +176,35 @@ type resolvedProps struct {
 	rescued       []string
 }
 
+// propMarkers accumulates the per-wrapper key lists that populate the
+// PageObject (mergeProps, deepMergeProps, prependProps, matchPropsOn).
+// Collected synchronously in the keep-loop before evaluation fans out.
+type propMarkers struct {
+	mergeKeys   []string
+	deepKeys    []string
+	prependKeys []string
+	matchOn     []string
+}
+
+// collect classifies a single wrapped prop, appending its key to the
+// relevant marker lists. Returns whether the prop should be rescued on
+// evaluation error.
+func (m *propMarkers) collect(key string, wrap propWrapper) (rescue bool) {
+	if wrap.isMerge() {
+		m.mergeKeys = append(m.mergeKeys, key)
+	}
+	if wrap.isDeepMerge() {
+		m.deepKeys = append(m.deepKeys, key)
+	}
+	if wrap.isPrepend() {
+		m.prependKeys = append(m.prependKeys, key)
+	}
+	for _, mk := range wrap.matchOnKeys() {
+		m.matchOn = append(m.matchOn, key+"."+mk)
+	}
+	return wrap.rescueOnError()
+}
+
 // evaluatePropsFor evaluates the subset of props identified by keep and
 // returns the final value map alongside the per-marker key lists that
 // populate the PageObject.
@@ -189,14 +218,10 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 
 	out := make(map[string]any, len(keep))
 	var (
-		mu          sync.Mutex
-		firstErr    error
-		mergeKeys   []string
-		deepKeys    []string
-		prependKeys []string
-		matchOn     []string
-		rescued     []string
-		wg          sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+		rescued  []string
+		wg       sync.WaitGroup
 	)
 
 	deferredMap := map[string][]string{}
@@ -213,28 +238,15 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		}
 	}
 
+	markers := &propMarkers{}
 	for _, k := range keep {
 		v, ok := all[k]
 		if !ok {
 			continue
 		}
-		if wrap, isWrap := asWrapper(v); isWrap {
-			if wrap.isMerge() {
-				mergeKeys = append(mergeKeys, k)
-			}
-			if wrap.isDeepMerge() {
-				deepKeys = append(deepKeys, k)
-			}
-			if wrap.isPrepend() {
-				prependKeys = append(prependKeys, k)
-			}
-			for _, mk := range wrap.matchOnKeys() {
-				matchOn = append(matchOn, k+"."+mk)
-			}
-		}
 		rescue := false
 		if wrap, isWrap := asWrapper(v); isWrap {
-			rescue = wrap.rescueOnError()
+			rescue = markers.collect(k, wrap)
 		}
 		wg.Add(1)
 		go func(key string, raw any, rescuable bool) {
@@ -259,20 +271,20 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 	if firstErr != nil {
 		return resolvedProps{}, firstErr
 	}
-	sort.Strings(mergeKeys)
-	sort.Strings(deepKeys)
-	sort.Strings(prependKeys)
-	sort.Strings(matchOn)
+	sort.Strings(markers.mergeKeys)
+	sort.Strings(markers.deepKeys)
+	sort.Strings(markers.prependKeys)
+	sort.Strings(markers.matchOn)
 	sort.Strings(rescued)
 	if len(deferredMap) == 0 {
 		deferredMap = nil
 	}
 	return resolvedProps{
 		values:        out,
-		mergeKeys:     mergeKeys,
-		deepMergeKeys: deepKeys,
-		prependKeys:   prependKeys,
-		matchPropsOn:  matchOn,
+		mergeKeys:     markers.mergeKeys,
+		deepMergeKeys: markers.deepKeys,
+		prependKeys:   markers.prependKeys,
+		matchPropsOn:  markers.matchOn,
 		deferred:      deferredMap,
 		rescued:       rescued,
 	}, nil
