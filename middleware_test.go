@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/inertia-go/inertia-go/session"
@@ -290,6 +291,43 @@ func TestMiddleware_ParsesExceptOnceProps(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if got, want := seen.ExceptOnceProps, []string{"plans", "billing"}; !equalStrings(got, want) {
 		t.Errorf("ExceptOnceProps = %v, want %v", got, want)
+	}
+}
+
+func TestMiddleware_ParsesPrecognition(t *testing.T) {
+	i := newTestInertia(t)
+	var seen RequestInfo
+	var varyHdr string
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = FromRequest(r)
+		varyHdr = w.Header().Get("Vary")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/submit", nil)
+	req.Header.Set("Precognition", "true")
+	req.Header.Set("Precognition-Validate-Only", "name, email")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if !seen.IsPrecognition {
+		t.Error("IsPrecognition: want true")
+	}
+	if got, want := seen.ValidateOnly, []string{"name", "email"}; !equalStrings(got, want) {
+		t.Errorf("ValidateOnly = %v, want %v", got, want)
+	}
+	if !strings.Contains(varyHdr, "Precognition") {
+		t.Errorf("Vary must include Precognition, got %q", varyHdr)
+	}
+
+	plain := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, plain)
+	if seen.IsPrecognition {
+		t.Error("absent Precognition header must leave IsPrecognition false")
+	}
+	if strings.Contains(rec2.Header().Get("Vary"), "Precognition") {
+		t.Errorf("non-precognition response must not Vary: Precognition, got %q", rec2.Header().Get("Vary"))
 	}
 }
 
