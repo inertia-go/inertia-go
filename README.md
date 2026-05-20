@@ -72,7 +72,8 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - `(*Inertia).Render(w, r, component, props)`
 - `(*Inertia).Redirect(w, r, url)` / `Location` / `Back`
 - `(*Inertia).Share(key, fn)` / `ShareValue(key, value)`
-- Prop wrappers: `inertia.Always`, `Optional`, `Defer` (`.Rescue()`), `Merge`, `DeepMerge`, `Prepend`, `MatchOn`, `Once` (`.ExpiresIn()`), `Scroll`
+- Prop types: `inertia.Always`, `Optional`, `Defer`, `Merge`, `DeepMerge`, `Once`, `Scroll`
+- Chainable modifiers (compose on Merge/DeepMerge/Defer/Once): `.Prepend(path...)`, `.Append(path...)`, `.MatchOn(map)`, `.DeepMerge()`, `.Once()`, `.ExpiresIn(d)`, `.As(key)`, `.Fresh()`, `.Rescue()` — e.g. `Merge(rows).Prepend("messages").MatchOn(map[string]string{"messages": "id"})`, `Defer(fn).DeepMerge()`, `Once(fn).As("plans").Fresh()`
 - Page meta: `Config.PreserveFragment`, `inertia.SetPreserveFragment(r, bool)`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
