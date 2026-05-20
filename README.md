@@ -52,6 +52,19 @@ func main() {
 }
 ```
 
+## Examples
+
+Runnable Go modules under [`examples/`](examples/):
+
+| Example | What it shows |
+|---|---|
+| [basic/](examples/basic/) | Cookie session, shared props, redirect + flash |
+| [vite/](examples/vite/) | Vite manifest helper — prod (`Load`) and dev (`Dev`) |
+| [ssr/](examples/ssr/) | SSR HTTP client — fail-soft default and `SSRRequired=true` |
+| [partial-reload/](examples/partial-reload/) | `Always` / `Optional` / `Defer` prop wrappers |
+
+Each example is a standalone Go module; `cd` into one and run `go run .`.
+
 ## API Surface
 
 - `inertia.New(Config) (*Inertia, error)`
