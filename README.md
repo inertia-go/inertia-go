@@ -74,6 +74,7 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - `(*Inertia).Share(key, fn)` / `ShareValue(key, value)`
 - Prop types: `inertia.Always`, `Optional`, `Defer`, `Merge`, `DeepMerge`, `Once`, `Scroll`
 - Chainable modifiers (compose on Merge/DeepMerge/Defer/Once): `.Prepend(path...)`, `.Append(path...)`, `.MatchOn(map)`, `.DeepMerge()`, `.Once()`, `.ExpiresIn(d)`, `.As(key)`, `.Fresh()`, `.Rescue()` — e.g. `Merge(rows).Prepend("messages").MatchOn(map[string]string{"messages": "id"})`, `Defer(fn).DeepMerge()`, `Once(fn).As("plans").Fresh()`
+- Infinite scroll: `inertia.Scroll(metadata, func() any { ... }, inertia.WithWrapper("items"), inertia.WithPageName("orders"))` — `metadata` resolves through the `ScrollAdapter` registry (`inertia.RegisterScrollAdapter`); a bare `map[string]any{"pageName","currentPage","previousPage","nextPage"}` or a `ScrollConfig` works out of the box. The data callback is lazy (run only when the prop is included).
 - Page meta: `Config.PreserveFragment`, `inertia.SetPreserveFragment(r, bool)`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
@@ -101,7 +102,7 @@ without backward compatibility for v1 or v2.
 | `prependProps` (v3 prepend) | ✅ |
 | `matchPropsOn` (v3 list reconciliation) | ✅ |
 | `sharedProps` (v3 shared-keys metadata) | ✅ |
-| `scrollProps` (v3 infinite scroll) | ✅ |
+| `scrollProps` (v3 infinite scroll, adapter-derived) | ✅ |
 | `onceProps` (v3 once props) | ✅ |
 | `rescuedProps` (v3 deferred rescue) | ✅ |
 | `preserveFragment` page meta | ✅ |

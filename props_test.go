@@ -89,10 +89,14 @@ func TestBuilder_ConflictPanics(t *testing.T) {
 	}
 }
 
-func TestScroll_Unchanged(t *testing.T) {
+func TestScroll_DefaultPageName(t *testing.T) {
 	next := 2
-	s := Scroll([]int{1, 2, 3}, ScrollConfig{CurrentPage: 1, NextPage: &next})
-	if scrollConfigOf(s) == nil || scrollConfigOf(s).PageName != "page" {
-		t.Error("Scroll config / default page name")
+	sp := Scroll(ScrollConfig{CurrentPage: 1, NextPage: &next}, func() any { return []int{1, 2, 3} })
+	cfg := sp.scrollConfig()
+	if cfg.PageName != "page" {
+		t.Errorf("Scroll default PageName = %q, want page", cfg.PageName)
+	}
+	if cfg.CurrentPage != 1 {
+		t.Errorf("Scroll CurrentPage = %d, want 1", cfg.CurrentPage)
 	}
 }

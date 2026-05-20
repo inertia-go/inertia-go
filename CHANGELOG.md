@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] — 2026-05-20
+
+### BREAKING
+
+- **`Scroll` signature change for full parity.** `Scroll(data any, cfg
+  ScrollConfig)` becomes `Scroll(metadata any, data func() any, opts
+  ...ScrollOption)`. `metadata` resolves through the new `ScrollAdapter`
+  registry (a `ScrollConfig` or `map[string]any` works built-in); `data`
+  is now a lazy callback evaluated only when the prop is included. Migrate
+  `Scroll(rows, cfg)` → `Scroll(cfg, func() any { return rows })`.
+  A nil data callback panics at construction (fail-fast).
+
+### Added
+
+- `ScrollAdapter` interface + `RegisterScrollAdapter` — pluggable
+  pagination-metadata derivation, matched in reverse registration order
+  (custom adapters override built-ins). Built-ins: identity (`ScrollConfig`)
+  and map (`map[string]any` metadata hash, also accepting JSON-decoded
+  `float64` numbers).
+- `WithWrapper(key)` — nest scroll data under a custom key (default
+  `"data"`); only `<prop>.<wrapper>` is merged, sibling metadata preserved.
+- `WithPageName(name)` — distinct page query-param per scroll container.
+- `Scroll` data callback is lazy: skipped entirely when partial-reload
+  filtering excludes the prop.
+
 ## [0.6.0] — 2026-05-20
 
 ### BREAKING

@@ -447,7 +447,7 @@ func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next := 2
 		i.Render(w, r, "Posts/Index", Props{
-			"posts": Scroll([]map[string]any{{"id": 1}}, ScrollConfig{CurrentPage: 1, NextPage: &next}),
+			"posts": Scroll(ScrollConfig{CurrentPage: 1, NextPage: &next}, func() any { return []map[string]any{{"id": 1}} }),
 		})
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/posts?page=1", nil)
@@ -478,6 +478,93 @@ func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
 	sc := page.ScrollProps["posts"]
 	if sc.PageName != "page" || sc.CurrentPage != 1 || sc.NextPage == nil || *sc.NextPage != 2 {
 		t.Errorf("scrollProps[posts] = %+v", sc)
+	}
+}
+
+// TestProtocol_ScrollWrapperAndAdapterRoundTrip complements
+// TestProtocol_ScrollProps_WireFormat (which covers the default "data"
+// wrapper + identity adapter) by exercising a CUSTOM paginator adapter and a
+// CUSTOM wrapper ("items"). It asserts the full round trip: data nests under
+// the custom wrapper, mergeProps lists <key>.<wrapper> using the SAME wrapper,
+// and scrollProps carries the adapter-derived currentPage. This guards the
+// emit-vs-consume wrapper-key invariant (a past once-.As() bug came from such
+// a divergence).
+func TestProtocol_ScrollWrapperAndAdapterRoundTrip(t *testing.T) {
+	t.Cleanup(resetScrollAdapters)
+	RegisterScrollAdapter(fakeAdapter{}) // matches fakePaginator, CurrentPage = cur
+
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Feed", Props{
+			"posts": Scroll(fakePaginator{cur: 2}, func() any {
+				return []map[string]any{{"id": 1}, {"id": 2}}
+			}, WithWrapper("items"), WithPageName("orders")),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("unmarshal page: %v\nbody=%s", err, rec.Body.String())
+	}
+
+	// props.posts.items holds the data (wrapper = "items", not "data").
+	posts, ok := page.Props["posts"].(map[string]any)
+	if !ok {
+		t.Fatalf("props.posts not an object: %#v", page.Props["posts"])
+	}
+	if _, ok := posts["items"]; !ok {
+		t.Errorf("data not nested under wrapper 'items': %#v", posts)
+	}
+	if _, ok := posts["data"]; ok {
+		t.Errorf("data must NOT be under default 'data' key when wrapper is 'items': %#v", posts)
+	}
+
+	// mergeProps lists posts.items (the SAME wrapper).
+	found := false
+	for _, m := range page.MergeProps {
+		if m == "posts.items" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("mergeProps missing 'posts.items': %#v", page.MergeProps)
+	}
+
+	// scrollProps.posts carries the adapter-derived currentPage and the
+	// WithPageName override flowed through deriveScroll to the wire format.
+	if sc := page.ScrollProps["posts"]; sc.CurrentPage != 2 {
+		t.Errorf("scrollProps[posts].currentPage = %d, want 2", sc.CurrentPage)
+	}
+	if sc := page.ScrollProps["posts"]; sc.PageName != "orders" {
+		t.Errorf("scrollProps[posts].pageName = %q, want orders (WithPageName override)", sc.PageName)
+	}
+}
+
+// TestProtocol_ScrollProp_LazyExcludedOnPartial proves the lazy guarantee
+// the CHANGELOG promises: when a partial reload excludes the scroll prop, its
+// data callback is never invoked. The goroutine that calls dataFn is only
+// spawned for kept keys, so an excluded scroll prop must not run its query.
+func TestProtocol_ScrollProp_LazyExcludedOnPartial(t *testing.T) {
+	called := false
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Feed", Props{
+			"posts":  Scroll(map[string]any{"currentPage": 1}, func() any { called = true; return nil }),
+			"counts": []int{1, 2},
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Feed")
+	req.Header.Set("X-Inertia-Partial-Data", "counts") // posts excluded
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if called {
+		t.Error("dataFn must not be called when the scroll prop is excluded by partial reload")
 	}
 }
 

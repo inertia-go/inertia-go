@@ -204,27 +204,3 @@ func asBuilder(v any) (*propBuilder, bool) {
 	return b, ok
 }
 
-// scrollWrap stays a separate type this release (full scroll parity is a
-// follow-up). Its data + cfg are read directly by the renderer.
-type scrollWrap struct {
-	data any
-	cfg  ScrollConfig
-}
-
-// Scroll wraps a page of infinite-scroll data with its pagination metadata.
-// The renderer places the data at props.<key>.data, lists <key>.data in
-// mergeProps, and emits cfg under scrollProps.<key>. PageName defaults to
-// "page".
-func Scroll(data any, cfg ScrollConfig) scrollWrap {
-	if cfg.PageName == "" {
-		cfg.PageName = "page"
-	}
-	return scrollWrap{data: data, cfg: cfg}
-}
-
-func scrollConfigOf(v any) *ScrollConfig {
-	if s, ok := v.(scrollWrap); ok {
-		return &s.cfg
-	}
-	return nil
-}
