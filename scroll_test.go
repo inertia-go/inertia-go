@@ -26,6 +26,21 @@ func TestMapAdapter_DerivesAllKeys(t *testing.T) {
 	}
 }
 
+func TestMapAdapter_DerivesFloat64(t *testing.T) {
+	t.Cleanup(resetScrollAdapters)
+	meta := map[string]any{
+		"currentPage": float64(2),
+		"nextPage":    float64(3),
+	}
+	cfg := deriveScroll(meta, ScrollOptions{})
+	if cfg.CurrentPage != 2 {
+		t.Errorf("CurrentPage = %d, want 2", cfg.CurrentPage)
+	}
+	if cfg.NextPage == nil || *cfg.NextPage != 3 {
+		t.Errorf("NextPage = %v, want 3", cfg.NextPage)
+	}
+}
+
 func TestMapAdapter_Defaults(t *testing.T) {
 	t.Cleanup(resetScrollAdapters)
 	cfg := deriveScroll(map[string]any{}, ScrollOptions{})

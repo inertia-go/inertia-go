@@ -54,12 +54,15 @@ func resetScrollAdapters() {
 // matching adapter's ScrollConfig. Panics if no adapter matches (fail-fast,
 // consistent with prop-construction misuse elsewhere).
 func deriveScroll(meta any, o ScrollOptions) ScrollConfig {
+	// The RLock is held across every adapter Match/Derive call to avoid
+	// racing with RegisterScrollAdapter's in-place append. Consequently an
+	// adapter implementation must NOT call RegisterScrollAdapter from within
+	// Match/Derive (it would deadlock on scrollMu).
 	scrollMu.RLock()
-	adapters := scrollAdapters
-	scrollMu.RUnlock()
-	for i := len(adapters) - 1; i >= 0; i-- {
-		if adapters[i].Match(meta) {
-			return adapters[i].Derive(meta, o)
+	defer scrollMu.RUnlock()
+	for i := len(scrollAdapters) - 1; i >= 0; i-- {
+		if scrollAdapters[i].Match(meta) {
+			return scrollAdapters[i].Derive(meta, o)
 		}
 	}
 	panic(fmt.Sprintf("inertia: no ScrollAdapter matched %T", meta))
@@ -109,10 +112,14 @@ func asString(v any, def string) string {
 }
 
 func asInt(v any) int {
-	if n, ok := v.(int); ok {
+	switch n := v.(type) {
+	case int:
 		return n
+	case float64:
+		return int(n)
+	default:
+		return 0
 	}
-	return 0
 }
 
 func asIntPtr(v any) *int {
@@ -121,6 +128,9 @@ func asIntPtr(v any) *int {
 		return &n
 	case *int:
 		return n
+	case float64:
+		i := int(n)
+		return &i
 	default:
 		return nil
 	}
