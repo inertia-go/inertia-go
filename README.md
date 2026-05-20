@@ -72,7 +72,8 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - `(*Inertia).Render(w, r, component, props)`
 - `(*Inertia).Redirect(w, r, url)` / `Location` / `Back`
 - `(*Inertia).Share(key, fn)` / `ShareValue(key, value)`
-- Prop wrappers: `inertia.Always`, `Optional`, `Defer` (`.Rescue()`), `Merge`, `DeepMerge`, `Prepend`, `MatchOn`, `Once` (`.ExpiresIn()`), `Scroll`
+- Prop types: `inertia.Always`, `Optional`, `Defer`, `Merge`, `DeepMerge`, `Once`, `Scroll`
+- Chainable modifiers (compose on Merge/DeepMerge/Defer/Once): `.Prepend(path...)`, `.Append(path...)`, `.MatchOn(map)`, `.DeepMerge()`, `.Once()`, `.ExpiresIn(d)`, `.As(key)`, `.Fresh()`, `.Rescue()` — e.g. `Merge(rows).Prepend("messages").MatchOn(map[string]string{"messages": "id"})`, `Defer(fn).DeepMerge()`, `Once(fn).As("plans").Fresh()`
 - Page meta: `Config.PreserveFragment`, `inertia.SetPreserveFragment(r, bool)`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
@@ -89,7 +90,8 @@ without backward compatibility for v1 or v2.
 | `X-Inertia` request/response header | ✅ |
 | `X-Inertia-Version` + 409 mismatch | ✅ |
 | `X-Inertia-Partial-Data` / `-Partial-Component` / `-Partial-Except` | ✅ |
-| `X-Inertia-Reset` | Reserved (reaches handler, not used internally yet) |
+| `X-Inertia-Reset` | Parsed; exposed via `FromRequest(r).Reset` (client-only directive — no mandatory server behavior) |
+| `Purpose: prefetch` | Parsed; exposed via `FromRequest(r).IsPrefetch` |
 | `X-Inertia-Location` (external redirect) | ✅ |
 | `X-Inertia-Redirect` (fragment redirect) | ✅ |
 | `Vary: X-Inertia` | ✅ |

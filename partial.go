@@ -5,7 +5,7 @@ package inertia
 //
 // Rules:
 //   - Non-partial (reqComponent empty or != currentComponent): keep all
-//     keys whose evaluateEager() is true; partialExcept is ignored.
+//     keys whose isEagerEvaluated(v) is true; partialExcept is ignored.
 //   - Partial with non-empty partialData: keep (partialData ∪ alwaysInclude)
 //     − partialExcept.
 //   - Partial with empty partialData (only Partial-Except or neither
@@ -63,15 +63,15 @@ func collect(props Props, pred func(k string, v any) bool) []string {
 }
 
 func isEagerEvaluated(v any) bool {
-	if w, ok := asWrapper(v); ok {
-		return w.evaluateEager()
+	if b, ok := asBuilder(v); ok {
+		return b.kind == kindEager
 	}
-	return true // bare values are always evaluated eagerly.
+	return true // scroll props and bare values are eager
 }
 
 func alwaysIncluded(v any) bool {
-	if w, ok := asWrapper(v); ok {
-		return w.alwaysInclude()
+	if b, ok := asBuilder(v); ok {
+		return b.always
 	}
 	return false
 }

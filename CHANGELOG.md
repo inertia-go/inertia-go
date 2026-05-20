@@ -3,6 +3,37 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — 2026-05-20
+
+### BREAKING
+
+- **Composable prop modifiers replace wrapper types.** The 9 internal
+  prop-wrapper types and the `propWrapper` interface are replaced by a
+  single composable `*propBuilder`. The standalone `Prepend(v)` and
+  `MatchOn(v, keys...)` constructors are **removed** — use
+  `Merge(v).Prepend(path)` and `Merge(v).MatchOn(map[string]string{...})`.
+  Modifiers now compose: `Defer(fn).DeepMerge()`, `Merge(fn).Once()`,
+  `Once(fn).As(key).Fresh()`. Conflicting combinations panic at
+  construct time.
+
+### Added
+
+- Chainable modifiers: `.Prepend(path...)`, `.Append(path...)`,
+  `.MatchOn(map)`, `.DeepMerge()`, `.Once()`, `.ExpiresIn(d)`,
+  `.As(key)`, `.Fresh()`, `.Rescue()`.
+- Nested merge/prepend paths emit dotted metadata
+  (`prependProps: ["chat.messages"]`, `matchPropsOn: ["chat.data.id"]`).
+- `Once` advanced API: `.As(key)` for a custom onceProps key, `.Fresh()`
+  to force server-side re-resolution.
+
+### Fixed
+
+- `once` props re-resolve on an explicit `X-Inertia-Partial-Data`
+  request even when the client reports them cached.
+- `once` props using `.As(alias)` now honor the cache-skip via the alias
+  key (previously always re-resolved).
+- `Purpose: prefetch` is parsed and exposed via `FromRequest(r).IsPrefetch`.
+
 ## [0.5.0] — 2026-05-20
 
 ### BREAKING

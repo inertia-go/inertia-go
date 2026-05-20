@@ -234,6 +234,30 @@ func TestMiddleware_HijackDrainsSession(t *testing.T) {
 	<-hijacked
 }
 
+func TestMiddleware_ParsesPrefetchPurpose(t *testing.T) {
+	i := newTestInertia(t)
+	var seen RequestInfo
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = FromRequest(r)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Purpose: prefetch → IsPrefetch true.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Purpose", "prefetch")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !seen.IsPrefetch {
+		t.Error("Purpose: prefetch must set IsPrefetch")
+	}
+
+	// No Purpose header → IsPrefetch false.
+	plain := httptest.NewRequest(http.MethodGet, "/", nil)
+	h.ServeHTTP(httptest.NewRecorder(), plain)
+	if seen.IsPrefetch {
+		t.Error("absent Purpose header must leave IsPrefetch false")
+	}
+}
+
 // newCookieInertia builds an *Inertia backed by a real CookieStore for tests
 // that need genuine Set-Cookie emission over a real HTTP server.
 func newCookieInertia(t *testing.T) *Inertia {
