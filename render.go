@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -44,7 +45,8 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	merged := i.mergeAllProps(r, props)
 	keep := filterKeys(merged, info.PartialComponent, component, info.PartialData, info.PartialExcept)
 
-	evaluated, mergeKeys, deepMergeKeys, deferred, err := i.evaluatePropsFor(r, merged, keep)
+	isPartial := info.PartialComponent != "" && info.PartialComponent == component
+	evaluated, mergeKeys, deepMergeKeys, deferred, err := i.evaluatePropsFor(r, merged, keep, isPartial)
 	if err != nil {
 		i.cfg.ErrorHandler(w, r,
 			fmt.Errorf("%w: %w", ErrPropEvaluationFailed, err))
@@ -104,38 +106,53 @@ func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {
 	return out
 }
 
-// evaluatePropsFor evaluates the subset of props identified by keep,
-// returning the final value map plus the merge/deepMerge/deferred markers
-// that go into the PageObject.
-func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string) (
+// evaluatePropsFor evaluates the subset of props identified by keep and
+// returns the final value map alongside the per-marker key lists that
+// populate the PageObject.
+//
+// Deferred metadata is collected from the entire merged-props map on
+// non-partial responses (so the v3 client sees deferredProps on initial
+// HTML) but is left empty on partial responses (the client uses metadata
+// from the initial response, not subsequent partials).
+func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, isPartial bool) (
 	map[string]any, []string, []string, map[string][]string, error,
 ) {
+	_ = r // reserved for future Defer-with-context evaluation.
+
 	out := make(map[string]any, len(keep))
 	var (
-		mu          sync.Mutex
-		firstErr    error
-		mergeKeys   []string
-		deepKeys    []string
-		deferredMap = map[string][]string{}
-		wg          sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+		mergeKeys []string
+		deepKeys  []string
+		wg        sync.WaitGroup
 	)
-	_ = r // r reserved for future Defer-with-context evaluation.
+
+	deferredMap := map[string][]string{}
+	if !isPartial {
+		for k, v := range all {
+			if w, ok := asWrapper(v); ok {
+				if g := w.deferGroup(); g != "" {
+					deferredMap[g] = append(deferredMap[g], k)
+				}
+			}
+		}
+		for g := range deferredMap {
+			sort.Strings(deferredMap[g])
+		}
+	}
 
 	for _, k := range keep {
 		v, ok := all[k]
 		if !ok {
 			continue
 		}
-		wrap, isWrap := asWrapper(v)
-		if isWrap {
+		if wrap, isWrap := asWrapper(v); isWrap {
 			if wrap.isMerge() {
 				mergeKeys = append(mergeKeys, k)
 			}
 			if wrap.isDeepMerge() {
 				deepKeys = append(deepKeys, k)
-			}
-			if g := wrap.deferGroup(); g != "" {
-				deferredMap[g] = append(deferredMap[g], k)
 			}
 		}
 		wg.Add(1)

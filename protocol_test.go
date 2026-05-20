@@ -143,3 +143,46 @@ func TestProtocol_InitialHTMLContainsAppDiv(t *testing.T) {
 		t.Errorf("legacy single-quoted data-page attribute must be gone: %s", body)
 	}
 }
+
+func TestProtocol_DeferredMetadataOnInitial(t *testing.T) {
+	// On the initial (non-partial) HTML response, the PageObject embedded
+	// inside <script data-page="app"> must include deferredProps so the
+	// v3 client knows to auto-fetch deferred values after mount.
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Dashboard", Props{
+			"user":     "alice",
+			"activity": Defer(func() (any, error) { return []int{1, 2, 3}, nil }, "feed"),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	const open = `<script data-page="app" type="application/json">`
+	const close = `</script>`
+	start := strings.Index(body, open)
+	if start < 0 {
+		t.Fatalf("script open tag missing: %s", body)
+	}
+	rest := body[start+len(open):]
+	end := strings.Index(rest, close)
+	if end < 0 {
+		t.Fatalf("script close tag missing: %s", body)
+	}
+	var page PageObject
+	if err := json.Unmarshal([]byte(rest[:end]), &page); err != nil {
+		t.Fatalf("page JSON: %v", err)
+	}
+
+	if page.DeferredProps == nil {
+		t.Fatalf("deferredProps missing from initial response: %+v", page)
+	}
+	if got := page.DeferredProps["feed"]; len(got) != 1 || got[0] != "activity" {
+		t.Errorf("deferredProps[feed] = %v, want [activity]", got)
+	}
+	if _, present := page.Props["activity"]; present {
+		t.Errorf("activity must not be evaluated on initial response: %v", page.Props)
+	}
+}
