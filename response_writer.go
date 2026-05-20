@@ -1,6 +1,8 @@
 package inertia
 
 import (
+	"bufio"
+	"net"
 	"net/http"
 	"sync"
 )
@@ -15,19 +17,44 @@ import (
 // cookie is silently dropped. flushWriter triggers the callback on the first
 // WriteHeader or Write so the flush's header mutations still reach the client.
 //
-// It deliberately implements only Header/WriteHeader/Write plus Unwrap. Optional
-// capabilities (http.Flusher, http.Hijacker, io.ReaderFrom, http.Pusher) are
-// reached by callers via http.NewResponseController, which follows Unwrap to
-// the underlying writer.
+// It implements Header/WriteHeader/Write plus Unwrap, and intercepts the two
+// capabilities that commit headers behind the wrapper's back: FlushError and
+// Hijack. http.ResponseController resolves these by checking the current writer
+// for FlushError/Flusher (and Hijacker) BEFORE following Unwrap; if flushWriter
+// only exposed Unwrap, a handler calling NewResponseController(w).Flush() would
+// commit headers on the underlying writer without ever draining the session,
+// dropping Set-Cookie. By implementing them here — each draining first, then
+// delegating to the underlying writer via its own ResponseController — the
+// drain is guaranteed to precede the header commit. Other capabilities
+// (SetReadDeadline, SetWriteDeadline, EnableFullDuplex) do not commit headers,
+// so they are left to reach the underlying writer through Unwrap unchanged.
 type flushWriter struct {
 	http.ResponseWriter
 	once  sync.Once
 	flush func()
 }
 
-// Unwrap exposes the wrapped writer so http.NewResponseController can locate
-// the underlying Flusher/Hijacker/etc.
+// Unwrap exposes the wrapped writer so http.NewResponseController can reach
+// the underlying writer for capabilities flushWriter does not intercept.
 func (w *flushWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// FlushError drains the session before flushing the underlying writer, so a
+// handler streaming via http.NewResponseController(w).Flush() does not commit
+// headers ahead of the Set-Cookie. ResponseController prefers FlushError over
+// Flusher and over Unwrap, so this method wins resolution.
+func (w *flushWriter) FlushError() error {
+	w.once.Do(w.flush)
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Hijack drains the session before handing the connection over. After a
+// hijack the normal response path is gone, so any buffered Set-Cookie must be
+// written first. Returns ErrNotSupported (via the underlying controller) if
+// the underlying writer is not a Hijacker.
+func (w *flushWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.once.Do(w.flush)
+	return http.NewResponseController(w.ResponseWriter).Hijack()
+}
 
 // WriteHeader runs the flush callback before committing the status line, then
 // delegates to the wrapped writer.

@@ -168,15 +168,20 @@ func TestMiddleware_CookieFlushSurvivesRealHTTP(t *testing.T) {
 	}
 }
 
-// TestMiddleware_ResponseControllerReachesUnderlying confirms the flushWriter
-// wrapper does not hide optional capabilities: http.NewResponseController must
-// follow Unwrap to the real writer so SSE/streaming handlers can still Flush.
-func TestMiddleware_ResponseControllerReachesUnderlying(t *testing.T) {
-	i := newTestInertia(t)
+// TestMiddleware_ResponseControllerFlushDrainsSession is the regression for
+// the flush-bypass bug: http.NewResponseController(w).Flush() resolves
+// FlushError/Flusher before following Unwrap, so a flushWriter that only
+// implements Unwrap would let the controller commit headers on the underlying
+// writer without first draining the session — dropping Set-Cookie. A handler
+// that flashes and then calls ResponseController.Flush() must still emit the
+// cookie, proving the drain happens before the underlying flush.
+func TestMiddleware_ResponseControllerFlushDrainsSession(t *testing.T) {
+	i := newCookieInertia(t)
+
 	var flushErr error
-	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("data: hi\n\n"))
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ValidationErrors(r).Add("email", "required")
+		i.persistCollectors(w, r) // buffer the flash into the accumulator
 		flushErr = http.NewResponseController(w).Flush()
 	}))
 	srv := httptest.NewServer(h)
@@ -189,8 +194,63 @@ func TestMiddleware_ResponseControllerReachesUnderlying(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if flushErr != nil {
-		t.Errorf("ResponseController.Flush did not reach underlying writer: %v", flushErr)
+		t.Fatalf("ResponseController.Flush did not reach underlying writer: %v", flushErr)
 	}
+	if len(resp.Cookies()) == 0 {
+		t.Fatalf("no Set-Cookie: ResponseController.Flush committed headers before draining session")
+	}
+}
+
+// TestMiddleware_HijackDrainsSession confirms that hijacking the connection
+// drains the session first. After a hijack the normal response path is gone,
+// so any buffered Set-Cookie must be flushed before the handler takes over.
+func TestMiddleware_HijackDrainsSession(t *testing.T) {
+	rf := &recordingFlusher{}
+	i, err := New(Config{Session: rf})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	hijacked := make(chan struct{})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		defer close(hijacked)
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Errorf("Hijack: %v", err)
+			return
+		}
+		if rf.flushCalls != 1 {
+			t.Errorf("session must be drained before hijack returns; flushCalls=%d", rf.flushCalls)
+		}
+		_ = conn.Close()
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/ws")
+	if err == nil {
+		_ = resp.Body.Close()
+	}
+	<-hijacked
+}
+
+// newCookieInertia builds an *Inertia backed by a real CookieStore for tests
+// that need genuine Set-Cookie emission over a real HTTP server.
+func newCookieInertia(t *testing.T) *Inertia {
+	t.Helper()
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.NewCookie(session.CookieOptions{Keys: [][]byte{key[:]}})
+	if err != nil {
+		t.Fatalf("NewCookie: %v", err)
+	}
+	i, err := New(Config{Session: store})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return i
 }
 
 func equalStrings(a, b []string) bool {
