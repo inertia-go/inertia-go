@@ -58,7 +58,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	keep := filterKeys(merged, info.PartialComponent, component, info.PartialData, info.PartialExcept)
 
 	isPartial := info.PartialComponent != "" && info.PartialComponent == component
-	evaluated, mergeKeys, deepMergeKeys, deferred, err := i.evaluatePropsFor(r, merged, keep, isPartial)
+	resolved, err := i.evaluatePropsFor(r, merged, keep, isPartial)
 	if err != nil {
 		i.cfg.ErrorHandler(w, r,
 			fmt.Errorf("%w: %w", ErrPropEvaluationFailed, err))
@@ -67,14 +67,16 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 
 	page := PageObject{
 		Component:      component,
-		Props:          evaluated,
+		Props:          resolved.values,
 		URL:            r.URL.RequestURI(),
 		Version:        currentVer,
 		EncryptHistory: i.cfg.EncryptHistory,
 		ClearHistory:   i.cfg.ClearHistory,
-		MergeProps:     mergeKeys,
-		DeepMergeProps: deepMergeKeys,
-		DeferredProps:  deferred,
+		MergeProps:     resolved.mergeKeys,
+		DeepMergeProps: resolved.deepMergeKeys,
+		DeferredProps:  resolved.deferred,
+		PrependProps:   resolved.prependKeys,
+		MatchPropsOn:   resolved.matchPropsOn,
 	}
 
 	if currentVer != "" {
@@ -118,6 +120,17 @@ func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {
 	return out
 }
 
+// resolvedProps bundles the evaluated prop values with the per-marker key
+// lists that populate the PageObject. Returned by evaluatePropsFor.
+type resolvedProps struct {
+	values        map[string]any
+	mergeKeys     []string
+	deepMergeKeys []string
+	prependKeys   []string
+	matchPropsOn  []string
+	deferred      map[string][]string
+}
+
 // evaluatePropsFor evaluates the subset of props identified by keep and
 // returns the final value map alongside the per-marker key lists that
 // populate the PageObject.
@@ -126,18 +139,18 @@ func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {
 // non-partial responses (so the v3 client sees deferredProps on initial
 // HTML) but is left empty on partial responses (the client uses metadata
 // from the initial response, not subsequent partials).
-func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, isPartial bool) (
-	map[string]any, []string, []string, map[string][]string, error,
-) {
+func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, isPartial bool) (resolvedProps, error) {
 	_ = r // reserved for future Defer-with-context evaluation.
 
 	out := make(map[string]any, len(keep))
 	var (
-		mu       sync.Mutex
-		firstErr error
-		mergeKeys []string
-		deepKeys  []string
-		wg        sync.WaitGroup
+		mu          sync.Mutex
+		firstErr    error
+		mergeKeys   []string
+		deepKeys    []string
+		prependKeys []string
+		matchOn     []string
+		wg          sync.WaitGroup
 	)
 
 	deferredMap := map[string][]string{}
@@ -166,6 +179,12 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 			if wrap.isDeepMerge() {
 				deepKeys = append(deepKeys, k)
 			}
+			if wrap.isPrepend() {
+				prependKeys = append(prependKeys, k)
+			}
+			for _, mk := range wrap.matchOnKeys() {
+				matchOn = append(matchOn, k+"."+mk)
+			}
 		}
 		wg.Add(1)
 		go func(key string, raw any) {
@@ -182,12 +201,23 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return nil, nil, nil, nil, firstErr
+		return resolvedProps{}, firstErr
 	}
+	sort.Strings(mergeKeys)
+	sort.Strings(deepKeys)
+	sort.Strings(prependKeys)
+	sort.Strings(matchOn)
 	if len(deferredMap) == 0 {
 		deferredMap = nil
 	}
-	return out, mergeKeys, deepKeys, deferredMap, nil
+	return resolvedProps{
+		values:        out,
+		mergeKeys:     mergeKeys,
+		deepMergeKeys: deepKeys,
+		prependKeys:   prependKeys,
+		matchPropsOn:  matchOn,
+		deferred:      deferredMap,
+	}, nil
 }
 
 func evaluateOne(v any) (any, error) {

@@ -1,7 +1,10 @@
 package inertia
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 )
@@ -107,5 +110,113 @@ func TestDefer_PropagatesError(t *testing.T) {
 	_, err := p.evaluate()
 	if !errors.Is(err, want) {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestPrepend_EvaluatesAndMarks(t *testing.T) {
+	p := Prepend([]int{1, 2})
+	got, err := p.evaluate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []int{1, 2}) {
+		t.Errorf("evaluate: %v", got)
+	}
+	if !p.evaluateEager() {
+		t.Error("Prepend must be eager")
+	}
+	if p.alwaysInclude() {
+		t.Error("Prepend must not alwaysInclude")
+	}
+	if !p.isPrepend() {
+		t.Error("Prepend must report isPrepend")
+	}
+	if p.isMerge() || p.isDeepMerge() {
+		t.Error("Prepend must not report merge/deepMerge")
+	}
+	if p.matchOnKeys() != nil {
+		t.Error("Prepend must not return matchOnKeys")
+	}
+	if p.deferGroup() != "" {
+		t.Error("Prepend must not have a defer group")
+	}
+}
+
+func TestMatchOn_EvaluatesAndExposesKeys(t *testing.T) {
+	m := MatchOn([]int{1}, "id", "slug")
+	got, err := m.evaluate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []int{1}) {
+		t.Errorf("evaluate: %v", got)
+	}
+	if !m.evaluateEager() {
+		t.Error("MatchOn must be eager")
+	}
+	if m.alwaysInclude() {
+		t.Error("MatchOn must not alwaysInclude")
+	}
+	if !reflect.DeepEqual(m.matchOnKeys(), []string{"id", "slug"}) {
+		t.Errorf("matchOnKeys: %v", m.matchOnKeys())
+	}
+}
+
+func TestMatchOn_PanicsWithNoKeys(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("MatchOn(...) with no keys must panic")
+		}
+	}()
+	_ = MatchOn("x")
+}
+
+func TestMatchOn_CopiesCallerKeys(t *testing.T) {
+	keys := []string{"id"}
+	m := MatchOn([]int{1}, keys...)
+	keys[0] = "MUTATED"
+	if m.matchOnKeys()[0] != "id" {
+		t.Errorf("MatchOn must copy caller's keys; got %v", m.matchOnKeys())
+	}
+}
+
+func TestPrepend_AppearsInPageObject(t *testing.T) {
+	i := newTestInertia(t)
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Feed", Props{"items": Prepend([]int{1, 2})})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(page.PrependProps, []string{"items"}) {
+		t.Errorf("prependProps: %v", page.PrependProps)
+	}
+}
+
+func TestMatchOn_AppearsInPageObject(t *testing.T) {
+	i := newTestInertia(t)
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Feed", Props{
+			"feed": MatchOn([]map[string]any{{"id": 1}}, "id", "slug"),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"feed.id", "feed.slug"}
+	if !reflect.DeepEqual(page.MatchPropsOn, want) {
+		t.Errorf("matchPropsOn: got %v, want %v", page.MatchPropsOn, want)
 	}
 }
