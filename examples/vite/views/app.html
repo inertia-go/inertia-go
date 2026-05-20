@@ -3,34 +3,10 @@
 <head>
   <meta charset="utf-8">
   <title>inertia-go vite example</title>
-  <script type="importmap">
-    {
-      "imports": {
-        "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js",
-        "@inertiajs/vue3": "https://unpkg.com/@inertiajs/vue3@^3/dist/index.esm.js"
-      }
-    }
-  </script>
   {{ vite "resources/js/app.tsx" }}
   {{ viteCSS "resources/js/app.tsx" }}
 </head>
 <body>
   {{ .InertiaBody }}
-  <script type="module">
-    import { createApp, h } from 'vue'
-    import { createInertiaApp } from '@inertiajs/vue3'
-
-    createInertiaApp({
-      resolve: (name) => ({
-        // Minimal inline page: render the component name + props as JSON.
-        render() {
-          return h('pre', JSON.stringify({ component: name, props: this.$page.props }, null, 2))
-        },
-      }),
-      setup({ el, App, props, plugin }) {
-        createApp({ render: () => h(App, props) }).use(plugin).mount(el)
-      },
-    })
-  </script>
 </body>
 </html>

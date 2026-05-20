@@ -37,6 +37,7 @@ func loadActivity() (any, error) {
 }
 
 func loadPlans() (any, error) {
+	log.Println("evaluating loadPlans")
 	return []map[string]any{
 		{"id": 1, "name": "Basic"},
 		{"id": 2, "name": "Pro"},
