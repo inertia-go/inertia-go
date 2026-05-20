@@ -180,6 +180,23 @@ func TestMatchOn_CopiesCallerKeys(t *testing.T) {
 	}
 }
 
+func TestDefer_Rescue_MarksWrapper(t *testing.T) {
+	d := Defer(func() (any, error) { return 1, nil }).Rescue()
+	if !d.rescueOnError() {
+		t.Error("Rescue() must set rescueOnError")
+	}
+	if d.deferGroup() != "default" {
+		t.Errorf("Rescue() must preserve group: %q", d.deferGroup())
+	}
+	g := Defer(func() (any, error) { return 1, nil }, "feed").Rescue()
+	if g.deferGroup() != "feed" {
+		t.Errorf("group lost: %q", g.deferGroup())
+	}
+	if Defer(func() (any, error) { return 1, nil }).rescueOnError() {
+		t.Error("plain Defer must not rescue")
+	}
+}
+
 func TestPrepend_AppearsInPageObject(t *testing.T) {
 	i := newTestInertia(t)
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -87,8 +87,9 @@ func (optionalWrap) scrollConfig() *ScrollConfig { return nil }
 // deferWrap is like optional but also surfaces in the PageObject's
 // deferredProps map, telling the client to fetch the value automatically.
 type deferWrap struct {
-	fn    func() (any, error)
-	group string
+	fn     func() (any, error)
+	group  string
+	rescue bool
 }
 
 // Defer wraps a callback that is excluded from the initial response and
@@ -96,7 +97,10 @@ type deferWrap struct {
 // At most one group label may be passed (default "default"); passing more
 // than one panics. The group batches deferred props that should be fetched
 // in the same partial-reload request.
-func Defer(fn func() (any, error), group ...string) propWrapper {
+//
+// The returned deferWrap implements propWrapper and may be further
+// configured via its Rescue method before being placed in a Props map.
+func Defer(fn func() (any, error), group ...string) deferWrap {
 	if len(group) > 1 {
 		panic("inertia.Defer: at most one group label is allowed")
 	}
@@ -115,10 +119,19 @@ func (deferWrap) isDeepMerge() bool           { return false }
 func (deferWrap) isPrepend() bool             { return false }
 func (deferWrap) matchOnKeys() []string       { return nil }
 func (d deferWrap) deferGroup() string        { return d.group }
-func (deferWrap) rescueOnError() bool         { return false }
+func (d deferWrap) rescueOnError() bool       { return d.rescue }
 func (deferWrap) isOnce() bool                { return false }
 func (deferWrap) onceTTL() time.Duration      { return 0 }
 func (deferWrap) scrollConfig() *ScrollConfig { return nil }
+
+// Rescue marks a deferred prop so that, if its callback returns an error
+// during resolution, the prop is dropped and its key is added to
+// PageObject.rescuedProps instead of failing the whole response. The
+// client renders the <Deferred> rescue slot for such keys.
+func (d deferWrap) Rescue() deferWrap {
+	d.rescue = true
+	return d
+}
 
 // mergeWrap marks a prop value for client-side array/object merging on
 // subsequent partial reloads (top-level merge).

@@ -94,6 +94,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		PrependProps:   resolved.prependKeys,
 		MatchPropsOn:   resolved.matchPropsOn,
 		SharedProps:    i.sharedKeysSnapshot(),
+		RescuedProps:   resolved.rescued,
 	}
 
 	if currentVer != "" {
@@ -172,6 +173,7 @@ type resolvedProps struct {
 	prependKeys   []string
 	matchPropsOn  []string
 	deferred      map[string][]string
+	rescued       []string
 }
 
 // evaluatePropsFor evaluates the subset of props identified by keep and
@@ -193,6 +195,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		deepKeys    []string
 		prependKeys []string
 		matchOn     []string
+		rescued     []string
 		wg          sync.WaitGroup
 	)
 
@@ -229,18 +232,28 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 				matchOn = append(matchOn, k+"."+mk)
 			}
 		}
+		rescue := false
+		if wrap, isWrap := asWrapper(v); isWrap {
+			rescue = wrap.rescueOnError()
+		}
 		wg.Add(1)
-		go func(key string, raw any) {
+		go func(key string, raw any, rescuable bool) {
 			defer wg.Done()
 			val, err := evaluateOne(raw)
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil && firstErr == nil {
-				firstErr = err
+			if err != nil {
+				if rescuable {
+					rescued = append(rescued, key)
+					return
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
 				return
 			}
 			out[key] = val
-		}(k, v)
+		}(k, v, rescue)
 	}
 	wg.Wait()
 	if firstErr != nil {
@@ -250,6 +263,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 	sort.Strings(deepKeys)
 	sort.Strings(prependKeys)
 	sort.Strings(matchOn)
+	sort.Strings(rescued)
 	if len(deferredMap) == 0 {
 		deferredMap = nil
 	}
@@ -260,6 +274,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		prependKeys:   prependKeys,
 		matchPropsOn:  matchOn,
 		deferred:      deferredMap,
+		rescued:       rescued,
 	}, nil
 }
 

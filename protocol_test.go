@@ -2,6 +2,7 @@ package inertia
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -275,5 +276,57 @@ func TestProtocol_SharedPropsListed(t *testing.T) {
 		if k == "errors" || k == "flash" || k == "localOnly" {
 			t.Errorf("sharedProps must not include %q: %v", k, page.SharedProps)
 		}
+	}
+}
+
+func TestProtocol_RescuedProps_DropsFailedDeferred(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Dashboard", Props{
+			"user": "alice",
+			"activity": Defer(func() (any, error) {
+				return nil, errors.New("boom")
+			}).Rescue(),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Dashboard")
+	req.Header.Set("X-Inertia-Partial-Data", "activity")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rescue must not 500; got %d", rec.Code)
+	}
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := page.Props["activity"]; present {
+		t.Errorf("failed rescued prop must be dropped: %v", page.Props)
+	}
+	want := []string{"activity"}
+	if !reflect.DeepEqual(page.RescuedProps, want) {
+		t.Errorf("rescuedProps = %v, want %v", page.RescuedProps, want)
+	}
+}
+
+func TestProtocol_NoRescue_StillFailsResponse(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Dashboard", Props{
+			"activity": Defer(func() (any, error) { return nil, errors.New("boom") }),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Dashboard")
+	req.Header.Set("X-Inertia-Partial-Data", "activity")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("non-rescued deferred error must 500; got %d", rec.Code)
 	}
 }
