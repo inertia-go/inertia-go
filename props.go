@@ -257,6 +257,39 @@ func (onceWrap) isOnce() bool                { return true }
 func (o onceWrap) onceTTL() time.Duration    { return o.ttl }
 func (onceWrap) scrollConfig() *ScrollConfig { return nil }
 
+// scrollWrap carries infinite-scroll data plus its pagination config. On
+// evaluation the renderer wraps the data as {data: ...} under the prop key,
+// lists "<key>.data" in mergeProps, and emits the config under scrollProps.
+type scrollWrap struct {
+	data any
+	cfg  ScrollConfig
+}
+
+// Scroll wraps a page of infinite-scroll data with its pagination metadata.
+// The renderer places the data at props.<key>.data, lists <key>.data in
+// mergeProps, and emits cfg under scrollProps.<key>. PageName defaults to
+// "page". The caller computes page numbers; the merge direction the client
+// requested is available via inertia.FromRequest(r).ScrollMergeIntent.
+func Scroll(data any, cfg ScrollConfig) scrollWrap {
+	if cfg.PageName == "" {
+		cfg.PageName = "page"
+	}
+	return scrollWrap{data: data, cfg: cfg}
+}
+
+func (s scrollWrap) evaluate() (any, error)      { return s.data, nil }
+func (scrollWrap) evaluateEager() bool           { return true }
+func (scrollWrap) alwaysInclude() bool           { return false }
+func (scrollWrap) isMerge() bool                 { return false }
+func (scrollWrap) isDeepMerge() bool             { return false }
+func (scrollWrap) isPrepend() bool               { return false }
+func (scrollWrap) matchOnKeys() []string         { return nil }
+func (scrollWrap) deferGroup() string            { return "" }
+func (scrollWrap) rescueOnError() bool           { return false }
+func (scrollWrap) isOnce() bool                  { return false }
+func (scrollWrap) onceTTL() time.Duration        { return 0 }
+func (s scrollWrap) scrollConfig() *ScrollConfig { return &s.cfg }
+
 // asWrapper returns w as a propWrapper if it is one, plus ok=true.
 func asWrapper(v any) (propWrapper, bool) {
 	w, ok := v.(propWrapper)

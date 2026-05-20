@@ -367,3 +367,42 @@ func TestProtocol_NoRescue_StillFailsResponse(t *testing.T) {
 		t.Errorf("non-rescued deferred error must 500; got %d", rec.Code)
 	}
 }
+
+func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next := 2
+		i.Render(w, r, "Posts/Index", Props{
+			"posts": Scroll([]map[string]any{{"id": 1}}, ScrollConfig{CurrentPage: 1, NextPage: &next}),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/posts?page=1", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	posts, ok := page.Props["posts"].(map[string]any)
+	if !ok {
+		t.Fatalf("posts must be an object with a data key: %T", page.Props["posts"])
+	}
+	if _, ok := posts["data"]; !ok {
+		t.Errorf("posts must contain data: %v", posts)
+	}
+	found := false
+	for _, m := range page.MergeProps {
+		if m == "posts.data" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("mergeProps must include posts.data: %v", page.MergeProps)
+	}
+	sc := page.ScrollProps["posts"]
+	if sc.PageName != "page" || sc.CurrentPage != 1 || sc.NextPage == nil || *sc.NextPage != 2 {
+		t.Errorf("scrollProps[posts] = %+v", sc)
+	}
+}

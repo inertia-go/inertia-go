@@ -262,3 +262,28 @@ func TestMatchOn_AppearsInPageObject(t *testing.T) {
 		t.Errorf("matchPropsOn: got %v, want %v", page.MatchPropsOn, want)
 	}
 }
+
+func TestScroll_WrapperBehavior(t *testing.T) {
+	next := 2
+	s := Scroll([]int{1, 2, 3}, ScrollConfig{CurrentPage: 1, NextPage: &next})
+	cfg := s.scrollConfig()
+	if cfg == nil {
+		t.Fatal("scrollConfig must be non-nil")
+	}
+	if cfg.PageName != "page" {
+		t.Errorf("empty PageName must default to \"page\"; got %q", cfg.PageName)
+	}
+	if cfg.CurrentPage != 1 || cfg.NextPage == nil || *cfg.NextPage != 2 {
+		t.Errorf("config: %+v", cfg)
+	}
+	if !s.evaluateEager() {
+		t.Error("Scroll must be eager")
+	}
+	v, err := s.evaluate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(v, []int{1, 2, 3}) {
+		t.Errorf("evaluate must return raw data: %v", v)
+	}
+}

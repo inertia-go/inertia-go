@@ -95,6 +95,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		PrependProps:     resolved.prependKeys,
 		MatchPropsOn:     resolved.matchPropsOn,
 		SharedProps:      i.sharedKeysSnapshot(),
+		ScrollProps:      resolved.scrollProps,
 		OnceProps:        resolved.onceProps,
 		RescuedProps:     resolved.rescued,
 		PreserveFragment: i.resolvePreserveFragment(r),
@@ -192,23 +193,28 @@ type resolvedProps struct {
 	deferred      map[string][]string
 	rescued       []string
 	onceProps     map[string]OnceConfig
+	scrollProps   map[string]ScrollConfig
 }
 
 // propMarkers accumulates the per-wrapper key lists that populate the
 // PageObject (mergeProps, deepMergeProps, prependProps, matchPropsOn,
-// onceProps). Collected synchronously in the keep-loop before evaluation fans out.
+// onceProps, scrollProps). Collected synchronously in the keep-loop before
+// evaluation fans out.
 type propMarkers struct {
 	mergeKeys   []string
 	deepKeys    []string
 	prependKeys []string
 	matchOn     []string
 	onceProps   map[string]OnceConfig
+	scrollProps map[string]ScrollConfig
 }
 
 // collect classifies a single wrapped prop, appending its key to the
 // relevant marker lists. Returns whether the prop should be rescued on
-// evaluation error and whether it should be skipped (client has it cached).
-func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[string]bool) (rescue, skip bool) {
+// evaluation error, whether it should be skipped (client has it cached),
+// and whether it is a Scroll wrapper (so the evaluator can wrap its value
+// as {data: ...}).
+func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[string]bool) (rescue, skip, scroll bool) {
 	if wrap.isMerge() {
 		m.mergeKeys = append(m.mergeKeys, key)
 	}
@@ -232,7 +238,12 @@ func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[strin
 			skip = true
 		}
 	}
-	return wrap.rescueOnError(), skip
+	if sc := wrap.scrollConfig(); sc != nil {
+		m.scrollProps[key] = *sc
+		m.mergeKeys = append(m.mergeKeys, key+".data")
+		scroll = true
+	}
+	return wrap.rescueOnError(), skip, scroll
 }
 
 // evaluatePropsFor evaluates the subset of props identified by keep and
@@ -268,22 +279,23 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		}
 	}
 
-	markers := &propMarkers{onceProps: map[string]OnceConfig{}}
+	markers := &propMarkers{onceProps: map[string]OnceConfig{}, scrollProps: map[string]ScrollConfig{}}
 	for _, k := range keep {
 		v, ok := all[k]
 		if !ok {
 			continue
 		}
 		rescue := false
+		scroll := false
 		if wrap, isWrap := asWrapper(v); isWrap {
 			var skip bool
-			rescue, skip = markers.collect(k, wrap, exceptOnce)
+			rescue, skip, scroll = markers.collect(k, wrap, exceptOnce)
 			if skip {
 				continue // client has it cached; don't resolve or include
 			}
 		}
 		wg.Add(1)
-		go func(key string, raw any, rescuable bool) {
+		go func(key string, raw any, rescuable, isScroll bool) {
 			defer wg.Done()
 			val, err := evaluateOne(raw)
 			mu.Lock()
@@ -298,8 +310,11 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 				}
 				return
 			}
+			if isScroll {
+				val = map[string]any{"data": val}
+			}
 			out[key] = val
-		}(k, v, rescue)
+		}(k, v, rescue, scroll)
 	}
 	wg.Wait()
 	if firstErr != nil {
@@ -317,6 +332,10 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 	if len(onceProps) == 0 {
 		onceProps = nil
 	}
+	scrollProps := markers.scrollProps
+	if len(scrollProps) == 0 {
+		scrollProps = nil
+	}
 	return resolvedProps{
 		values:        out,
 		mergeKeys:     markers.mergeKeys,
@@ -326,6 +345,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		deferred:      deferredMap,
 		rescued:       rescued,
 		onceProps:     onceProps,
+		scrollProps:   scrollProps,
 	}, nil
 }
 
