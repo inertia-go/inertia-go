@@ -219,36 +219,62 @@ type propMarkers struct {
 // (exceptOnce) AND it was not explicitly requested by a partial reload
 // (requested). Per the v3 protocol, an explicit X-Inertia-Partial-Data
 // request forces the server to re-resolve a once prop even if cached.
-func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce, requested map[string]bool) (rescue, skip, scroll bool) {
-	if wrap.isMerge() {
-		m.mergeKeys = append(m.mergeKeys, key)
-	}
-	if wrap.isDeepMerge() {
-		m.deepKeys = append(m.deepKeys, key)
-	}
-	if wrap.isPrepend() {
-		m.prependKeys = append(m.prependKeys, key)
-	}
-	for _, mk := range wrap.matchOnKeys() {
-		m.matchOn = append(m.matchOn, key+"."+mk)
-	}
-	if wrap.isOnce() {
-		var exp *int64
-		if ttl := wrap.onceTTL(); ttl > 0 {
-			ms := time.Now().Add(ttl).UnixMilli()
-			exp = &ms
-		}
-		m.onceProps[key] = OnceConfig{Prop: key, ExpiresAt: exp}
-		if exceptOnce[key] && !requested[key] {
-			skip = true
-		}
-	}
-	if sc := wrap.scrollConfig(); sc != nil {
+func (m *propMarkers) collect(key string, v any, exceptOnce, requested map[string]bool) (rescue, skip, scroll bool) {
+	if sc := scrollConfigOf(v); sc != nil {
 		m.scrollProps[key] = *sc
 		m.mergeKeys = append(m.mergeKeys, key+".data")
-		scroll = true
+		return false, false, true
 	}
-	return wrap.rescueOnError(), skip, scroll
+	b, ok := asBuilder(v)
+	if !ok {
+		return false, false, false
+	}
+	if b.merge {
+		m.mergeKeys = append(m.mergeKeys, key)
+	}
+	if b.deepMerge {
+		m.deepKeys = append(m.deepKeys, key)
+	}
+	for _, p := range b.prependPath {
+		m.prependKeys = append(m.prependKeys, joinPath(key, p))
+	}
+	for _, p := range b.appendPath {
+		if p != "" {
+			m.mergeKeys = append(m.mergeKeys, joinPath(key, p))
+		}
+	}
+	for path, field := range b.matchOn {
+		m.matchOn = append(m.matchOn, joinPath(joinPath(key, path), field))
+	}
+	if b.once {
+		skip = m.collectOnce(key, b, exceptOnce, requested)
+	}
+	return b.rescue, skip, false
+}
+
+// collectOnce records the once-prop metadata for key and reports whether the
+// prop should be skipped because the client already has it cached. Per the v3
+// protocol, an explicit X-Inertia-Partial-Data request (requested) forces
+// re-resolution even if cached, and .Fresh() always forces re-resolution.
+func (m *propMarkers) collectOnce(key string, b *propBuilder, exceptOnce, requested map[string]bool) bool {
+	onceKey := key
+	if b.onceKey != "" {
+		onceKey = b.onceKey
+	}
+	var exp *int64
+	if b.onceTTL > 0 {
+		ms := time.Now().Add(b.onceTTL).UnixMilli()
+		exp = &ms
+	}
+	m.onceProps[onceKey] = OnceConfig{Prop: onceKey, ExpiresAt: exp}
+	return exceptOnce[key] && !requested[key] && !b.onceFresh
+}
+
+func joinPath(key, sub string) string {
+	if sub == "" {
+		return key
+	}
+	return key + "." + sub
 }
 
 // evaluatePropsFor evaluates the subset of props identified by keep and
@@ -275,10 +301,8 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 	deferredMap := map[string][]string{}
 	if !isPartial {
 		for k, v := range all {
-			if w, ok := asWrapper(v); ok {
-				if g := w.deferGroup(); g != "" {
-					deferredMap[g] = append(deferredMap[g], k)
-				}
+			if b, ok := asBuilder(v); ok && b.kind == kindDeferred {
+				deferredMap[b.defGrp] = append(deferredMap[b.defGrp], k)
 			}
 		}
 		for g := range deferredMap {
@@ -292,14 +316,9 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		if !ok {
 			continue
 		}
-		rescue := false
-		scroll := false
-		if wrap, isWrap := asWrapper(v); isWrap {
-			var skip bool
-			rescue, skip, scroll = markers.collect(k, wrap, exceptOnce, requested)
-			if skip {
-				continue // client has it cached; don't resolve or include
-			}
+		rescue, skip, scroll := markers.collect(k, v, exceptOnce, requested)
+		if skip {
+			continue // client has it cached; don't resolve or include
 		}
 		wg.Add(1)
 		go func(key string, raw any, rescuable, isScroll bool) {
@@ -357,8 +376,11 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 }
 
 func evaluateOne(v any) (any, error) {
-	if w, ok := asWrapper(v); ok {
-		return w.evaluate()
+	if b, ok := asBuilder(v); ok {
+		return b.resolve()
+	}
+	if sc, ok := v.(scrollWrap); ok {
+		return sc.data, nil
 	}
 	return v, nil
 }

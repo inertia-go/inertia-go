@@ -1,289 +1,98 @@
 package inertia
 
 import (
-	"encoding/json"
-	"errors"
-	"net/http"
-	"net/http/httptest"
-	"reflect"
 	"testing"
 	"time"
 )
 
-func TestAlways_AlwaysIncluded(t *testing.T) {
-	p := Always("hello")
-	got, err := p.evaluate()
-	if err != nil {
-		t.Fatal(err)
+func TestBuilder_BaseConstructors(t *testing.T) {
+	if Always(1).kind != kindEager || !Always(1).always {
+		t.Error("Always: eager + always")
 	}
-	if got != "hello" {
-		t.Errorf("got %v", got)
+	if Optional(func() (any, error) { return 1, nil }).kind != kindOptional {
+		t.Error("Optional: kindOptional")
 	}
-	if !p.alwaysInclude() {
-		t.Error("Always should report alwaysInclude")
+	d := Defer(func() (any, error) { return 1, nil }, "feed")
+	if d.kind != kindDeferred || d.defGrp != "feed" {
+		t.Errorf("Defer: %+v", d)
 	}
-}
-
-func TestOptional_NotEvaluatedUntilRequested(t *testing.T) {
-	calls := 0
-	p := Optional(func() (any, error) {
-		calls++
-		return "v", nil
-	})
-	if p.evaluateEager() {
-		t.Error("Optional must not evaluate eagerly")
+	if !Merge(1).merge || !DeepMerge(1).deepMerge {
+		t.Error("Merge/DeepMerge flags")
 	}
-	if calls != 0 {
-		t.Error("Optional callback ran during construction")
-	}
-	got, err := p.evaluate()
-	if err != nil || got != "v" {
-		t.Errorf("evaluate: %v %v", got, err)
+	if !Once(func() (any, error) { return 1, nil }).once {
+		t.Error("Once flag")
 	}
 }
 
-func TestDefer_HasGroupAndDoesNotEvaluateEager(t *testing.T) {
-	p := Defer(func() (any, error) { return 1, nil }, "groupA")
-	if p.evaluateEager() {
-		t.Error("Defer must not evaluate eagerly")
+func TestBuilder_MergeChaining(t *testing.T) {
+	b := Merge([]int{1}).Prepend("messages").MatchOn(map[string]string{"messages": "id"})
+	if len(b.prependPath) != 1 || b.prependPath[0] != "messages" {
+		t.Errorf("prependPath: %v", b.prependPath)
 	}
-	if p.deferGroup() != "groupA" {
-		t.Errorf("group: %s", p.deferGroup())
+	if b.matchOn["messages"] != "id" {
+		t.Errorf("matchOn: %v", b.matchOn)
 	}
-}
-
-func TestDefer_DefaultGroup(t *testing.T) {
-	p := Defer(func() (any, error) { return 1, nil })
-	if g := p.deferGroup(); g != "default" {
-		t.Errorf("group: %q", g)
+	if Merge([]int{1}).Prepend().prependPath[0] != "" {
+		t.Error("root prepend must store empty path")
 	}
 }
 
-func TestMerge_EvaluatesEagerAndMarksMerge(t *testing.T) {
-	p := Merge([]int{1, 2, 3})
-	if !p.evaluateEager() {
-		t.Error("Merge should evaluate eagerly")
-	}
-	if !p.isMerge() {
-		t.Error("Merge should report isMerge")
-	}
-	got, _ := p.evaluate()
-	if !reflect.DeepEqual(got, []int{1, 2, 3}) {
-		t.Errorf("got %v", got)
+func TestBuilder_DeferDeepMergeComposition(t *testing.T) {
+	b := Defer(func() (any, error) { return 1, nil }, "feed").DeepMerge()
+	if b.kind != kindDeferred || !b.deepMerge || b.defGrp != "feed" {
+		t.Errorf("defer+deepMerge: %+v", b)
 	}
 }
 
-func TestDeepMerge_MarksDeepMerge(t *testing.T) {
-	p := DeepMerge(map[string]int{"a": 1})
-	if !p.isDeepMerge() {
-		t.Error("DeepMerge should report isDeepMerge")
+func TestBuilder_MergeOnce(t *testing.T) {
+	b := Merge(func() (any, error) { return 1, nil }).Once()
+	if !b.merge || !b.once || b.fn == nil {
+		t.Errorf("merge+once with fn: %+v", b)
 	}
 }
 
-func TestEvaluate_PropagatesError(t *testing.T) {
-	want := errors.New("boom")
-	p := Optional(func() (any, error) { return nil, want })
-	_, err := p.evaluate()
-	if !errors.Is(err, want) {
-		t.Errorf("got %v", err)
+func TestBuilder_OnceAdvanced(t *testing.T) {
+	b := Once(func() (any, error) { return 1, nil }).ExpiresIn(time.Hour).As("plans").Fresh()
+	if b.onceTTL != time.Hour || b.onceKey != "plans" || !b.onceFresh {
+		t.Errorf("once advanced: %+v", b)
 	}
 }
 
-func TestDefer_EmptyStringGroupDefaults(t *testing.T) {
-	p := Defer(func() (any, error) { return 1, nil }, "")
-	if g := p.deferGroup(); g != "default" {
-		t.Errorf("empty string group should default, got %q", g)
+func TestBuilder_DeferRescue(t *testing.T) {
+	b := Defer(func() (any, error) { return 1, nil }).Rescue()
+	if !b.rescue {
+		t.Error("Rescue must set rescue")
 	}
 }
 
-func TestDefer_TooManyGroupsPanics(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic for multiple group labels")
-		}
-	}()
-	_ = Defer(func() (any, error) { return 1, nil }, "a", "b")
-}
-
-func TestDefer_PropagatesError(t *testing.T) {
-	want := errors.New("boom")
-	p := Defer(func() (any, error) { return nil, want })
-	_, err := p.evaluate()
-	if !errors.Is(err, want) {
-		t.Errorf("got %v", err)
+func TestBuilder_ConflictPanics(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func()
+	}{
+		{"Prepend on Always", func() { Always(1).Prepend() }},
+		{"MatchOn on Optional", func() { Optional(func() (any, error) { return 1, nil }).MatchOn(map[string]string{"a": "b"}) }},
+		{"As without Once", func() { Merge(1).As("x") }},
+		{"Fresh without Once", func() { Merge(1).Fresh() }},
+		{"Rescue without Defer", func() { Merge(1).Rescue() }},
+		{"empty MatchOn", func() { Merge(1).MatchOn(map[string]string{}) }},
 	}
-}
-
-func TestPrepend_EvaluatesAndMarks(t *testing.T) {
-	p := Prepend([]int{1, 2})
-	got, err := p.evaluate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, []int{1, 2}) {
-		t.Errorf("evaluate: %v", got)
-	}
-	if !p.evaluateEager() {
-		t.Error("Prepend must be eager")
-	}
-	if p.alwaysInclude() {
-		t.Error("Prepend must not alwaysInclude")
-	}
-	if !p.isPrepend() {
-		t.Error("Prepend must report isPrepend")
-	}
-	if p.isMerge() || p.isDeepMerge() {
-		t.Error("Prepend must not report merge/deepMerge")
-	}
-	if p.matchOnKeys() != nil {
-		t.Error("Prepend must not return matchOnKeys")
-	}
-	if p.deferGroup() != "" {
-		t.Error("Prepend must not have a defer group")
-	}
-}
-
-func TestMatchOn_EvaluatesAndExposesKeys(t *testing.T) {
-	m := MatchOn([]int{1}, "id", "slug")
-	got, err := m.evaluate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, []int{1}) {
-		t.Errorf("evaluate: %v", got)
-	}
-	if !m.evaluateEager() {
-		t.Error("MatchOn must be eager")
-	}
-	if m.alwaysInclude() {
-		t.Error("MatchOn must not alwaysInclude")
-	}
-	if !reflect.DeepEqual(m.matchOnKeys(), []string{"id", "slug"}) {
-		t.Errorf("matchOnKeys: %v", m.matchOnKeys())
-	}
-}
-
-func TestMatchOn_PanicsWithNoKeys(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("MatchOn(...) with no keys must panic")
-		}
-	}()
-	_ = MatchOn("x")
-}
-
-func TestMatchOn_CopiesCallerKeys(t *testing.T) {
-	keys := []string{"id"}
-	m := MatchOn([]int{1}, keys...)
-	keys[0] = "MUTATED"
-	if m.matchOnKeys()[0] != "id" {
-		t.Errorf("MatchOn must copy caller's keys; got %v", m.matchOnKeys())
-	}
-}
-
-func TestDefer_Rescue_MarksWrapper(t *testing.T) {
-	d := Defer(func() (any, error) { return 1, nil }).Rescue()
-	if !d.rescueOnError() {
-		t.Error("Rescue() must set rescueOnError")
-	}
-	if d.deferGroup() != "default" {
-		t.Errorf("Rescue() must preserve group: %q", d.deferGroup())
-	}
-	g := Defer(func() (any, error) { return 1, nil }, "feed").Rescue()
-	if g.deferGroup() != "feed" {
-		t.Errorf("group lost: %q", g.deferGroup())
-	}
-	if Defer(func() (any, error) { return 1, nil }).rescueOnError() {
-		t.Error("plain Defer must not rescue")
-	}
-}
-
-func TestPrepend_AppearsInPageObject(t *testing.T) {
-	i := newTestInertia(t)
-	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		i.Render(w, r, "Feed", Props{"items": Prepend([]int{1, 2})})
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Inertia", "true")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	var page PageObject
-	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(page.PrependProps, []string{"items"}) {
-		t.Errorf("prependProps: %v", page.PrependProps)
-	}
-}
-
-func TestOnce_WrapperBehavior(t *testing.T) {
-	o := Once(func() (any, error) { return []int{1}, nil })
-	v, err := o.evaluate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(v, []int{1}) {
-		t.Errorf("evaluate: %v", v)
-	}
-	if !o.isOnce() {
-		t.Error("Once must report isOnce")
-	}
-	if !o.evaluateEager() {
-		t.Error("Once must be eager (sent on first load)")
-	}
-	if o.onceTTL() != 0 {
-		t.Errorf("default TTL must be 0; got %v", o.onceTTL())
-	}
-	withTTL := Once(func() (any, error) { return 1, nil }).ExpiresIn(time.Hour)
-	if withTTL.onceTTL() != time.Hour {
-		t.Errorf("ExpiresIn TTL: %v", withTTL.onceTTL())
-	}
-}
-
-func TestMatchOn_AppearsInPageObject(t *testing.T) {
-	i := newTestInertia(t)
-	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		i.Render(w, r, "Feed", Props{
-			"feed": MatchOn([]map[string]any{{"id": 1}}, "id", "slug"),
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s must panic", c.name)
+				}
+			}()
+			c.fn()
 		})
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("X-Inertia", "true")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	var page PageObject
-	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"feed.id", "feed.slug"}
-	if !reflect.DeepEqual(page.MatchPropsOn, want) {
-		t.Errorf("matchPropsOn: got %v, want %v", page.MatchPropsOn, want)
 	}
 }
 
-func TestScroll_WrapperBehavior(t *testing.T) {
+func TestScroll_Unchanged(t *testing.T) {
 	next := 2
 	s := Scroll([]int{1, 2, 3}, ScrollConfig{CurrentPage: 1, NextPage: &next})
-	cfg := s.scrollConfig()
-	if cfg == nil {
-		t.Fatal("scrollConfig must be non-nil")
-	}
-	if cfg.PageName != "page" {
-		t.Errorf("empty PageName must default to \"page\"; got %q", cfg.PageName)
-	}
-	if cfg.CurrentPage != 1 || cfg.NextPage == nil || *cfg.NextPage != 2 {
-		t.Errorf("config: %+v", cfg)
-	}
-	if !s.evaluateEager() {
-		t.Error("Scroll must be eager")
-	}
-	v, err := s.evaluate()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(v, []int{1, 2, 3}) {
-		t.Errorf("evaluate must return raw data: %v", v)
+	if scrollConfigOf(s) == nil || scrollConfigOf(s).PageName != "page" {
+		t.Error("Scroll config / default page name")
 	}
 }

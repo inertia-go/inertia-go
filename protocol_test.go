@@ -437,3 +437,29 @@ func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
 		t.Errorf("scrollProps[posts] = %+v", sc)
 	}
 }
+
+func TestProtocol_NestedPrependPath(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Chat", Props{
+			"chat": Merge(map[string]any{"messages": []int{1}}).Prepend("messages"),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range page.PrependProps {
+		if p == "chat.messages" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("prependProps must contain chat.messages: %v", page.PrependProps)
+	}
+}

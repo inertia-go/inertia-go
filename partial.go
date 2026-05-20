@@ -63,15 +63,15 @@ func collect(props Props, pred func(k string, v any) bool) []string {
 }
 
 func isEagerEvaluated(v any) bool {
-	if w, ok := asWrapper(v); ok {
-		return w.evaluateEager()
+	if b, ok := asBuilder(v); ok {
+		return b.kind == kindEager
 	}
-	return true // bare values are always evaluated eagerly.
+	return true // scroll props and bare values are eager
 }
 
 func alwaysIncluded(v any) bool {
-	if w, ok := asWrapper(v); ok {
-		return w.alwaysInclude()
+	if b, ok := asBuilder(v); ok {
+		return b.always
 	}
 	return false
 }
