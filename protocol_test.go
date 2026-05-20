@@ -481,6 +481,65 @@ func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
 	}
 }
 
+// TestProtocol_ScrollWrapperAndAdapterRoundTrip complements
+// TestProtocol_ScrollProps_WireFormat (which covers the default "data"
+// wrapper + identity adapter) by exercising a CUSTOM paginator adapter and a
+// CUSTOM wrapper ("items"). It asserts the full round trip: data nests under
+// the custom wrapper, mergeProps lists <key>.<wrapper> using the SAME wrapper,
+// and scrollProps carries the adapter-derived currentPage. This guards the
+// emit-vs-consume wrapper-key invariant (a past once-.As() bug came from such
+// a divergence).
+func TestProtocol_ScrollWrapperAndAdapterRoundTrip(t *testing.T) {
+	t.Cleanup(resetScrollAdapters)
+	RegisterScrollAdapter(fakeAdapter{}) // matches fakePaginator, CurrentPage = cur
+
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Feed", Props{
+			"posts": Scroll(fakePaginator{cur: 2}, func() any {
+				return []map[string]any{{"id": 1}, {"id": 2}}
+			}, WithWrapper("items")),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("unmarshal page: %v\nbody=%s", err, rec.Body.String())
+	}
+
+	// props.posts.items holds the data (wrapper = "items", not "data").
+	posts, ok := page.Props["posts"].(map[string]any)
+	if !ok {
+		t.Fatalf("props.posts not an object: %#v", page.Props["posts"])
+	}
+	if _, ok := posts["items"]; !ok {
+		t.Errorf("data not nested under wrapper 'items': %#v", posts)
+	}
+	if _, ok := posts["data"]; ok {
+		t.Errorf("data must NOT be under default 'data' key when wrapper is 'items': %#v", posts)
+	}
+
+	// mergeProps lists posts.items (the SAME wrapper).
+	found := false
+	for _, m := range page.MergeProps {
+		if m == "posts.items" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("mergeProps missing 'posts.items': %#v", page.MergeProps)
+	}
+
+	// scrollProps.posts carries the adapter-derived currentPage.
+	if sc := page.ScrollProps["posts"]; sc.CurrentPage != 2 {
+		t.Errorf("scrollProps[posts].currentPage = %d, want 2", sc.CurrentPage)
+	}
+}
+
 func TestProtocol_NestedPrependPath(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
