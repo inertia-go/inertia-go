@@ -3,6 +3,43 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] — 2026-05-20
+
+### BREAKING
+
+- **PageObject type corrections**: `scrollProps` and `onceProps` change
+  from `map[string]map[string]any` to typed `map[string]ScrollConfig` /
+  `map[string]OnceConfig`. These were reserved-but-unpopulated in v0.4,
+  so no runtime behavior changes unless code asserted the old map types.
+- **propWrapper interface** gained four methods (`rescueOnError`,
+  `isOnce`, `onceTTL`, `scrollConfig`). Internal interface; user code
+  unaffected unless asserting concrete wrapper types (unsupported).
+
+### Added
+
+- `Defer(...).Rescue()` — a deferred prop whose callback errors is dropped
+  and its key listed in `rescuedProps` instead of failing the response.
+- `Once(fn)` / `.ExpiresIn(d)` — props the client caches once and reuses;
+  honors the `X-Inertia-Except-Once-Props` request header.
+- `Scroll(data, ScrollConfig{})` — infinite-scroll pagination; nests data
+  at `props.<key>.data`, lists `<key>.data` in `mergeProps`, emits
+  `scrollProps`. Merge direction exposed via `RequestInfo.ScrollMergeIntent`
+  (`X-Inertia-Infinite-Scroll-Merge-Intent`).
+- `Config.PreserveFragment` + `SetPreserveFragment(r, bool)` — page-object
+  `preserveFragment` with a bidirectional per-request override.
+- Examples now mount a real Inertia v3 client (esm.sh importmap + Vue 3)
+  instead of dead skeleton templates.
+
+### Fixed
+
+- `CookieStore` flush now runs before the response headers are committed
+  (on first WriteHeader/Write), so flash/errors are no longer dropped
+  under a real net/http server. Previously the deferred flush ran after
+  the handler had already sent headers.
+- `ResponseController.Flush()` / `.Hijack()` drain the session before
+  committing headers or hijacking, closing the streaming/WebSocket
+  data-loss path.
+
 ## [0.4.0] — 2026-05-20
 
 ### BREAKING

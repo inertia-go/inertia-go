@@ -2,6 +2,7 @@ package inertia
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -217,6 +218,39 @@ func TestProtocol_PageObject_HasV3Fields(t *testing.T) {
 	}
 }
 
+func TestProtocol_PageObject_V5Types(t *testing.T) {
+	var p PageObject
+	// Corrected typed maps (were map[string]map[string]any in v0.4).
+	p.ScrollProps = map[string]ScrollConfig{"posts": {PageName: "page", CurrentPage: 1}}
+	p.OnceProps = map[string]OnceConfig{"plans": {Prop: "plans"}}
+	p.RescuedProps = []string{"activity"}
+	p.PreserveFragment = true
+
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, want := range []string{
+		`"scrollProps":{"posts":{"pageName":"page","previousPage":null,"nextPage":null,"currentPage":1}}`,
+		`"onceProps":{"plans":{"prop":"plans","expiresAt":null}}`,
+		`"rescuedProps":["activity"]`,
+		`"preserveFragment":true`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("missing %s in %s", want, js)
+		}
+	}
+
+	// Zero-value page must emit none of them (omitempty).
+	z, _ := json.Marshal(PageObject{})
+	for _, tag := range []string{"scrollProps", "onceProps", "rescuedProps", "preserveFragment"} {
+		if strings.Contains(string(z), tag) {
+			t.Errorf("zero-value PageObject must omit %q: %s", tag, z)
+		}
+	}
+}
+
 func TestProtocol_SharedPropsListed(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	i.ShareValue("appName", "Acme")
@@ -242,5 +276,133 @@ func TestProtocol_SharedPropsListed(t *testing.T) {
 		if k == "errors" || k == "flash" || k == "localOnly" {
 			t.Errorf("sharedProps must not include %q: %v", k, page.SharedProps)
 		}
+	}
+}
+
+func TestProtocol_RescuedProps_DropsFailedDeferred(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Dashboard", Props{
+			"user": "alice",
+			"activity": Defer(func() (any, error) {
+				return nil, errors.New("boom")
+			}).Rescue(),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Dashboard")
+	req.Header.Set("X-Inertia-Partial-Data", "activity")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rescue must not 500; got %d", rec.Code)
+	}
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := page.Props["activity"]; present {
+		t.Errorf("failed rescued prop must be dropped: %v", page.Props)
+	}
+	want := []string{"activity"}
+	if !reflect.DeepEqual(page.RescuedProps, want) {
+		t.Errorf("rescuedProps = %v, want %v", page.RescuedProps, want)
+	}
+}
+
+func TestProtocol_OnceProps_FirstLoadAndCached(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	mk := func(except string) PageObject {
+		h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			i.Render(w, r, "Billing", Props{
+				"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }),
+			})
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+		req.Header.Set("X-Inertia", "true")
+		if except != "" {
+			req.Header.Set("X-Inertia-Except-Once-Props", except)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var p PageObject
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	first := mk("")
+	if _, ok := first.Props["plans"]; !ok {
+		t.Error("first load must include plans in props")
+	}
+	if got := first.OnceProps["plans"]; got.Prop != "plans" || got.ExpiresAt != nil {
+		t.Errorf("onceProps[plans] = %+v, want {plans, nil}", got)
+	}
+	cached := mk("plans")
+	if _, ok := cached.Props["plans"]; ok {
+		t.Error("cached once prop must be omitted from props")
+	}
+	if _, ok := cached.OnceProps["plans"]; !ok {
+		t.Error("onceProps metadata must persist on cached response")
+	}
+}
+
+func TestProtocol_NoRescue_StillFailsResponse(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Dashboard", Props{
+			"activity": Defer(func() (any, error) { return nil, errors.New("boom") }),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Dashboard")
+	req.Header.Set("X-Inertia-Partial-Data", "activity")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("non-rescued deferred error must 500; got %d", rec.Code)
+	}
+}
+
+func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next := 2
+		i.Render(w, r, "Posts/Index", Props{
+			"posts": Scroll([]map[string]any{{"id": 1}}, ScrollConfig{CurrentPage: 1, NextPage: &next}),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/posts?page=1", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	posts, ok := page.Props["posts"].(map[string]any)
+	if !ok {
+		t.Fatalf("posts must be an object with a data key: %T", page.Props["posts"])
+	}
+	if _, ok := posts["data"]; !ok {
+		t.Errorf("posts must contain data: %v", posts)
+	}
+	found := false
+	for _, m := range page.MergeProps {
+		if m == "posts.data" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("mergeProps must include posts.data: %v", page.MergeProps)
+	}
+	sc := page.ScrollProps["posts"]
+	if sc.PageName != "page" || sc.CurrentPage != 1 || sc.NextPage == nil || *sc.NextPage != 2 {
+		t.Errorf("scrollProps[posts] = %+v", sc)
 	}
 }

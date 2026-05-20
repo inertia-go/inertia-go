@@ -36,6 +36,14 @@ func loadActivity() (any, error) {
 	}, nil
 }
 
+func loadPlans() (any, error) {
+	log.Println("evaluating loadPlans")
+	return []map[string]any{
+		{"id": 1, "name": "Basic"},
+		{"id": 2, "name": "Pro"},
+	}, nil
+}
+
 func main() {
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
@@ -61,7 +69,8 @@ func main() {
 		i.Render(w, r, "Dashboard", inertia.Props{
 			"user":     inertia.Always(currentUser()),
 			"stats":    inertia.Optional(loadExpensiveStats),
-			"activity": inertia.Defer(loadActivity, "feed"),
+			"activity": inertia.Defer(loadActivity, "feed").Rescue(),
+			"plans":    inertia.Once(loadPlans),
 		})
 	})
 

@@ -365,6 +365,50 @@ func TestRender_InertiaJSON_SkipsSSR(t *testing.T) {
 	}
 }
 
+func TestPreserveFragment_DefaultAndOverride(t *testing.T) {
+	// Global default true, emitted when no override.
+	i, _ := New(Config{Session: session.NewMemory(), PreserveFragment: true})
+	render := func(setup func(r *http.Request)) PageObject {
+		h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if setup != nil {
+				setup(r)
+			}
+			i.Render(w, r, "Home", Props{"x": 1})
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("X-Inertia", "true")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var p PageObject
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	if !render(nil).PreserveFragment {
+		t.Error("global default true must emit preserveFragment")
+	}
+	if render(func(r *http.Request) { SetPreserveFragment(r, false) }).PreserveFragment {
+		t.Error("override false must turn off preserveFragment")
+	}
+
+	j, _ := New(Config{Session: session.NewMemory(), PreserveFragment: false})
+	hh := j.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		SetPreserveFragment(r, true)
+		j.Render(w, r, "Home", Props{"x": 1})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	hh.ServeHTTP(rec, req)
+	var p PageObject
+	_ = json.Unmarshal(rec.Body.Bytes(), &p)
+	if !p.PreserveFragment {
+		t.Error("override true must turn on preserveFragment over global false")
+	}
+}
+
 func TestRedirect_FlashesErrorsAndMessages(t *testing.T) {
 	store := session.NewMemory()
 	i, _ := New(Config{Session: store})

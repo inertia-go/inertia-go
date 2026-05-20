@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // PageObject is the JSON shape Inertia sends to the client.
@@ -28,12 +29,28 @@ type PageObject struct {
 	MatchPropsOn []string `json:"matchPropsOn,omitempty"`
 	SharedProps  []string `json:"sharedProps,omitempty"`
 
-	// Reserved for v0.5: declared on the struct so a future minor release
-	// adding wrappers does not change the public JSON shape. v0.4 code
-	// paths never write to them.
-	ScrollProps  map[string]map[string]any `json:"scrollProps,omitempty"`
-	OnceProps    map[string]map[string]any `json:"onceProps,omitempty"`
-	RescuedProps []string                  `json:"rescuedProps,omitempty"`
+	// v0.5 — Inertia v3 page-object features.
+	ScrollProps      map[string]ScrollConfig `json:"scrollProps,omitempty"`
+	OnceProps        map[string]OnceConfig   `json:"onceProps,omitempty"`
+	RescuedProps     []string                `json:"rescuedProps,omitempty"`
+	PreserveFragment bool                    `json:"preserveFragment,omitempty"`
+}
+
+// ScrollConfig is the per-key infinite-scroll metadata emitted under
+// PageObject.scrollProps. Pointers are nil when there is no adjacent page.
+type ScrollConfig struct {
+	PageName     string `json:"pageName"`
+	PreviousPage *int   `json:"previousPage"`
+	NextPage     *int   `json:"nextPage"`
+	CurrentPage  int    `json:"currentPage"`
+}
+
+// OnceConfig is the per-key once-prop metadata emitted under
+// PageObject.onceProps. ExpiresAt is a Unix-millisecond timestamp, or nil
+// for "never expires".
+type OnceConfig struct {
+	Prop      string `json:"prop"`
+	ExpiresAt *int64 `json:"expiresAt"`
 }
 
 // Render writes an Inertia response for the given component and props.
@@ -66,18 +83,22 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	}
 
 	page := PageObject{
-		Component:      component,
-		Props:          resolved.values,
-		URL:            r.URL.RequestURI(),
-		Version:        currentVer,
-		EncryptHistory: i.cfg.EncryptHistory,
-		ClearHistory:   i.cfg.ClearHistory,
-		MergeProps:     resolved.mergeKeys,
-		DeepMergeProps: resolved.deepMergeKeys,
-		DeferredProps:  resolved.deferred,
-		PrependProps:   resolved.prependKeys,
-		MatchPropsOn:   resolved.matchPropsOn,
-		SharedProps:    i.sharedKeysSnapshot(),
+		Component:        component,
+		Props:            resolved.values,
+		URL:              r.URL.RequestURI(),
+		Version:          currentVer,
+		EncryptHistory:   i.cfg.EncryptHistory,
+		ClearHistory:     i.cfg.ClearHistory,
+		MergeProps:       resolved.mergeKeys,
+		DeepMergeProps:   resolved.deepMergeKeys,
+		DeferredProps:    resolved.deferred,
+		PrependProps:     resolved.prependKeys,
+		MatchPropsOn:     resolved.matchPropsOn,
+		SharedProps:      i.sharedKeysSnapshot(),
+		ScrollProps:      resolved.scrollProps,
+		OnceProps:        resolved.onceProps,
+		RescuedProps:     resolved.rescued,
+		PreserveFragment: i.resolvePreserveFragment(r),
 	}
 
 	if currentVer != "" {
@@ -89,6 +110,20 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		return
 	}
 	i.writeHTML(w, r, page)
+}
+
+// resolvePreserveFragment returns the per-request override if one was set
+// via SetPreserveFragment, otherwise the Config default.
+func (i *Inertia) resolvePreserveFragment(r *http.Request) bool {
+	if h, ok := r.Context().Value(ctxKeyPreserveFragment).(*preserveFragmentHolder); ok {
+		h.mu.Lock()
+		v := h.val
+		h.mu.Unlock()
+		if v != nil {
+			return *v
+		}
+	}
+	return i.cfg.PreserveFragment
 }
 
 // sharedKeysSnapshot returns the sorted, deduplicated keys of values
@@ -156,6 +191,59 @@ type resolvedProps struct {
 	prependKeys   []string
 	matchPropsOn  []string
 	deferred      map[string][]string
+	rescued       []string
+	onceProps     map[string]OnceConfig
+	scrollProps   map[string]ScrollConfig
+}
+
+// propMarkers accumulates the per-wrapper key lists that populate the
+// PageObject (mergeProps, deepMergeProps, prependProps, matchPropsOn,
+// onceProps, scrollProps). Collected synchronously in the keep-loop before
+// evaluation fans out.
+type propMarkers struct {
+	mergeKeys   []string
+	deepKeys    []string
+	prependKeys []string
+	matchOn     []string
+	onceProps   map[string]OnceConfig
+	scrollProps map[string]ScrollConfig
+}
+
+// collect classifies a single wrapped prop, appending its key to the
+// relevant marker lists. Returns whether the prop should be rescued on
+// evaluation error, whether it should be skipped (client has it cached),
+// and whether it is a Scroll wrapper (so the evaluator can wrap its value
+// as {data: ...}).
+func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[string]bool) (rescue, skip, scroll bool) {
+	if wrap.isMerge() {
+		m.mergeKeys = append(m.mergeKeys, key)
+	}
+	if wrap.isDeepMerge() {
+		m.deepKeys = append(m.deepKeys, key)
+	}
+	if wrap.isPrepend() {
+		m.prependKeys = append(m.prependKeys, key)
+	}
+	for _, mk := range wrap.matchOnKeys() {
+		m.matchOn = append(m.matchOn, key+"."+mk)
+	}
+	if wrap.isOnce() {
+		var exp *int64
+		if ttl := wrap.onceTTL(); ttl > 0 {
+			ms := time.Now().Add(ttl).UnixMilli()
+			exp = &ms
+		}
+		m.onceProps[key] = OnceConfig{Prop: key, ExpiresAt: exp}
+		if exceptOnce[key] {
+			skip = true
+		}
+	}
+	if sc := wrap.scrollConfig(); sc != nil {
+		m.scrollProps[key] = *sc
+		m.mergeKeys = append(m.mergeKeys, key+".data")
+		scroll = true
+	}
+	return wrap.rescueOnError(), skip, scroll
 }
 
 // evaluatePropsFor evaluates the subset of props identified by keep and
@@ -167,17 +255,14 @@ type resolvedProps struct {
 // HTML) but is left empty on partial responses (the client uses metadata
 // from the initial response, not subsequent partials).
 func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, isPartial bool) (resolvedProps, error) {
-	_ = r // reserved for future Defer-with-context evaluation.
+	exceptOnce := setOf(FromRequest(r).ExceptOnceProps)
 
 	out := make(map[string]any, len(keep))
 	var (
-		mu          sync.Mutex
-		firstErr    error
-		mergeKeys   []string
-		deepKeys    []string
-		prependKeys []string
-		matchOn     []string
-		wg          sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+		rescued  []string
+		wg       sync.WaitGroup
 	)
 
 	deferredMap := map[string][]string{}
@@ -194,56 +279,73 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		}
 	}
 
+	markers := &propMarkers{onceProps: map[string]OnceConfig{}, scrollProps: map[string]ScrollConfig{}}
 	for _, k := range keep {
 		v, ok := all[k]
 		if !ok {
 			continue
 		}
+		rescue := false
+		scroll := false
 		if wrap, isWrap := asWrapper(v); isWrap {
-			if wrap.isMerge() {
-				mergeKeys = append(mergeKeys, k)
-			}
-			if wrap.isDeepMerge() {
-				deepKeys = append(deepKeys, k)
-			}
-			if wrap.isPrepend() {
-				prependKeys = append(prependKeys, k)
-			}
-			for _, mk := range wrap.matchOnKeys() {
-				matchOn = append(matchOn, k+"."+mk)
+			var skip bool
+			rescue, skip, scroll = markers.collect(k, wrap, exceptOnce)
+			if skip {
+				continue // client has it cached; don't resolve or include
 			}
 		}
 		wg.Add(1)
-		go func(key string, raw any) {
+		go func(key string, raw any, rescuable, isScroll bool) {
 			defer wg.Done()
 			val, err := evaluateOne(raw)
 			mu.Lock()
 			defer mu.Unlock()
-			if err != nil && firstErr == nil {
-				firstErr = err
+			if err != nil {
+				if rescuable {
+					rescued = append(rescued, key)
+					return
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
 				return
 			}
+			if isScroll {
+				val = map[string]any{"data": val}
+			}
 			out[key] = val
-		}(k, v)
+		}(k, v, rescue, scroll)
 	}
 	wg.Wait()
 	if firstErr != nil {
 		return resolvedProps{}, firstErr
 	}
-	sort.Strings(mergeKeys)
-	sort.Strings(deepKeys)
-	sort.Strings(prependKeys)
-	sort.Strings(matchOn)
+	sort.Strings(markers.mergeKeys)
+	sort.Strings(markers.deepKeys)
+	sort.Strings(markers.prependKeys)
+	sort.Strings(markers.matchOn)
+	sort.Strings(rescued)
 	if len(deferredMap) == 0 {
 		deferredMap = nil
 	}
+	onceProps := markers.onceProps
+	if len(onceProps) == 0 {
+		onceProps = nil
+	}
+	scrollProps := markers.scrollProps
+	if len(scrollProps) == 0 {
+		scrollProps = nil
+	}
 	return resolvedProps{
 		values:        out,
-		mergeKeys:     mergeKeys,
-		deepMergeKeys: deepKeys,
-		prependKeys:   prependKeys,
-		matchPropsOn:  matchOn,
+		mergeKeys:     markers.mergeKeys,
+		deepMergeKeys: markers.deepKeys,
+		prependKeys:   markers.prependKeys,
+		matchPropsOn:  markers.matchOn,
 		deferred:      deferredMap,
+		rescued:       rescued,
+		onceProps:     onceProps,
+		scrollProps:   scrollProps,
 	}, nil
 }
 

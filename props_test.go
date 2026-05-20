@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestAlways_AlwaysIncluded(t *testing.T) {
@@ -180,6 +181,23 @@ func TestMatchOn_CopiesCallerKeys(t *testing.T) {
 	}
 }
 
+func TestDefer_Rescue_MarksWrapper(t *testing.T) {
+	d := Defer(func() (any, error) { return 1, nil }).Rescue()
+	if !d.rescueOnError() {
+		t.Error("Rescue() must set rescueOnError")
+	}
+	if d.deferGroup() != "default" {
+		t.Errorf("Rescue() must preserve group: %q", d.deferGroup())
+	}
+	g := Defer(func() (any, error) { return 1, nil }, "feed").Rescue()
+	if g.deferGroup() != "feed" {
+		t.Errorf("group lost: %q", g.deferGroup())
+	}
+	if Defer(func() (any, error) { return 1, nil }).rescueOnError() {
+		t.Error("plain Defer must not rescue")
+	}
+}
+
 func TestPrepend_AppearsInPageObject(t *testing.T) {
 	i := newTestInertia(t)
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +214,30 @@ func TestPrepend_AppearsInPageObject(t *testing.T) {
 	}
 	if !reflect.DeepEqual(page.PrependProps, []string{"items"}) {
 		t.Errorf("prependProps: %v", page.PrependProps)
+	}
+}
+
+func TestOnce_WrapperBehavior(t *testing.T) {
+	o := Once(func() (any, error) { return []int{1}, nil })
+	v, err := o.evaluate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(v, []int{1}) {
+		t.Errorf("evaluate: %v", v)
+	}
+	if !o.isOnce() {
+		t.Error("Once must report isOnce")
+	}
+	if !o.evaluateEager() {
+		t.Error("Once must be eager (sent on first load)")
+	}
+	if o.onceTTL() != 0 {
+		t.Errorf("default TTL must be 0; got %v", o.onceTTL())
+	}
+	withTTL := Once(func() (any, error) { return 1, nil }).ExpiresIn(time.Hour)
+	if withTTL.onceTTL() != time.Hour {
+		t.Errorf("ExpiresIn TTL: %v", withTTL.onceTTL())
 	}
 }
 
@@ -218,5 +260,30 @@ func TestMatchOn_AppearsInPageObject(t *testing.T) {
 	want := []string{"feed.id", "feed.slug"}
 	if !reflect.DeepEqual(page.MatchPropsOn, want) {
 		t.Errorf("matchPropsOn: got %v, want %v", page.MatchPropsOn, want)
+	}
+}
+
+func TestScroll_WrapperBehavior(t *testing.T) {
+	next := 2
+	s := Scroll([]int{1, 2, 3}, ScrollConfig{CurrentPage: 1, NextPage: &next})
+	cfg := s.scrollConfig()
+	if cfg == nil {
+		t.Fatal("scrollConfig must be non-nil")
+	}
+	if cfg.PageName != "page" {
+		t.Errorf("empty PageName must default to \"page\"; got %q", cfg.PageName)
+	}
+	if cfg.CurrentPage != 1 || cfg.NextPage == nil || *cfg.NextPage != 2 {
+		t.Errorf("config: %+v", cfg)
+	}
+	if !s.evaluateEager() {
+		t.Error("Scroll must be eager")
+	}
+	v, err := s.evaluate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(v, []int{1, 2, 3}) {
+		t.Errorf("evaluate must return raw data: %v", v)
 	}
 }
