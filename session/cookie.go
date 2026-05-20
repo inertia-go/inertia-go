@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 )
 
 // ErrCookieTooLarge is returned when an encoded cookie payload exceeds
@@ -44,11 +45,28 @@ type CookieOptions struct {
 	MaxBytes int
 }
 
+// pendingPayload buffers an in-progress cookie payload for a single
+// response writer. The mutex guards payload/dirty against concurrent
+// Flash*/Take* calls from a handler that fans out work to goroutines.
+type pendingPayload struct {
+	mu      sync.Mutex
+	payload cookiePayload
+	dirty   bool
+}
+
 // CookieStore is a stateless session store that encodes flash data inside
 // an AES-GCM-encrypted cookie. Concurrent-safe.
+//
+// Multi-write semantics: each Flash*/Take* call mutates an in-memory
+// payload keyed by the response writer; nothing is written to the wire
+// until FlushResponse is called. inertia.Middleware calls FlushResponse
+// via a deferred hook at the end of every request, so handlers issuing
+// multiple flashes get a single Set-Cookie that contains all of them.
+// CookieStore therefore requires inertia.Middleware to be mounted.
 type CookieStore struct {
-	opts CookieOptions
-	aead []cipher.AEAD // index aligned with opts.Keys
+	opts    CookieOptions
+	aead    []cipher.AEAD // index aligned with opts.Keys
+	pending sync.Map      // key: http.ResponseWriter, value: *pendingPayload
 }
 
 type cookiePayload struct {
@@ -169,53 +187,94 @@ func isEmpty(p cookiePayload) bool {
 	return len(p.Errors) == 0 && len(p.Messages) == 0
 }
 
+// ensurePending returns the per-response accumulator, seeding it from
+// the request cookie on first access so pre-existing keys (errors,
+// messages) survive subsequent partial updates.
+func (s *CookieStore) ensurePending(w http.ResponseWriter, r *http.Request) *pendingPayload {
+	if v, ok := s.pending.Load(w); ok {
+		return v.(*pendingPayload)
+	}
+	p := &pendingPayload{payload: s.read(r)}
+	if actual, loaded := s.pending.LoadOrStore(w, p); loaded {
+		return actual.(*pendingPayload)
+	}
+	return p
+}
+
 // FlashErrors implements Store.
 func (s *CookieStore) FlashErrors(w http.ResponseWriter, r *http.Request, bag string, errs map[string]string) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	p := s.read(r)
-	if p.Errors == nil {
-		p.Errors = map[string]map[string]string{}
+	p := s.ensurePending(w, r)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.payload.Errors == nil {
+		p.payload.Errors = map[string]map[string]string{}
 	}
-	p.Errors[bag] = errs
-	return s.write(w, p)
+	p.payload.Errors[bag] = errs
+	p.dirty = true
+	return nil
 }
 
 // TakeErrors implements Store.
 func (s *CookieStore) TakeErrors(w http.ResponseWriter, r *http.Request, bag string) (map[string]string, error) {
-	p := s.read(r)
-	if p.Errors == nil {
+	p := s.ensurePending(w, r)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.payload.Errors == nil {
 		return nil, nil
 	}
-	out := p.Errors[bag]
-	delete(p.Errors, bag)
-	if err := s.write(w, p); err != nil {
-		return out, err
+	out := p.payload.Errors[bag]
+	if out == nil {
+		return nil, nil
 	}
+	delete(p.payload.Errors, bag)
+	p.dirty = true
 	return out, nil
 }
 
 // FlashMessage implements Store.
 func (s *CookieStore) FlashMessage(w http.ResponseWriter, r *http.Request, key string, val any) error {
-	p := s.read(r)
-	if p.Messages == nil {
-		p.Messages = map[string]any{}
+	p := s.ensurePending(w, r)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.payload.Messages == nil {
+		p.payload.Messages = map[string]any{}
 	}
-	p.Messages[key] = val
-	return s.write(w, p)
+	p.payload.Messages[key] = val
+	p.dirty = true
+	return nil
 }
 
 // TakeMessages implements Store.
 func (s *CookieStore) TakeMessages(w http.ResponseWriter, r *http.Request) (map[string]any, error) {
-	p := s.read(r)
-	if p.Messages == nil {
+	p := s.ensurePending(w, r)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.payload.Messages) == 0 {
 		return nil, nil
 	}
-	out := p.Messages
-	p.Messages = nil
-	if err := s.write(w, p); err != nil {
-		return out, err
-	}
+	out := p.payload.Messages
+	p.payload.Messages = nil
+	p.dirty = true
 	return out, nil
+}
+
+// FlushResponse writes the accumulated payload for w as a single
+// Set-Cookie header, then evicts w's entry from the pending map.
+// It is a no-op when the response writer has no pending entry, or when
+// the entry exists but no mutating call set dirty.
+func (s *CookieStore) FlushResponse(w http.ResponseWriter) error {
+	v, ok := s.pending.LoadAndDelete(w)
+	if !ok {
+		return nil
+	}
+	p := v.(*pendingPayload)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.dirty {
+		return nil
+	}
+	return s.write(w, p.payload)
 }

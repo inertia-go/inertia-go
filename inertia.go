@@ -245,3 +245,16 @@ func (i *Inertia) ShareValue(key string, v any) {
 func (i *Inertia) ShareEval(key string, fn func(r *http.Request) any) {
 	i.Share(key, fn)
 }
+
+// flushSession invokes the session store's FlushResponse hook if the
+// store implements SessionFlusher. Called via defer at the end of every
+// request handled by Middleware so accumulators can emit their writes.
+func (i *Inertia) flushSession(w http.ResponseWriter) {
+	fl, ok := i.cfg.Session.(SessionFlusher)
+	if !ok {
+		return
+	}
+	if err := fl.FlushResponse(w); err != nil {
+		i.logger.Warn("inertia: session flush failed", "err", err)
+	}
+}

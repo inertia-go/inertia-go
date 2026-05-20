@@ -80,6 +80,47 @@ func newTestInertia(t *testing.T) *Inertia {
 	return i
 }
 
+type recordingFlusher struct {
+	stubSession
+	flushCalls int
+}
+
+func (f *recordingFlusher) FlushResponse(_ http.ResponseWriter) error {
+	f.flushCalls++
+	return nil
+}
+
+func TestMiddleware_FlushesSessionAfterHandler(t *testing.T) {
+	rf := &recordingFlusher{}
+	i, _ := New(Config{Session: rf})
+
+	handled := false
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handled = true
+		if rf.flushCalls != 0 {
+			t.Errorf("flush must not fire before handler returns; got %d", rf.flushCalls)
+		}
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if !handled {
+		t.Fatal("handler did not run")
+	}
+	if rf.flushCalls != 1 {
+		t.Errorf("FlushResponse calls: got %d, want 1", rf.flushCalls)
+	}
+}
+
+func TestMiddleware_NoFlushWhenStoreLacksInterface(t *testing.T) {
+	// Plain stubSession (no FlushResponse method) must not error.
+	i, _ := New(Config{Session: stubSession{}})
+	h := i.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
