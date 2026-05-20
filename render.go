@@ -1,6 +1,7 @@
 package inertia
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -25,7 +26,9 @@ type PageObject struct {
 // Render writes an Inertia response for the given component and props.
 // If the request is an Inertia AJAX request (X-Inertia: true), the
 // response is JSON; otherwise it is the initial HTML document with the
-// PageObject embedded in <div id="app" data-page="...">.
+// PageObject embedded in a <script data-page="app"
+// type="application/json"> element followed by an empty <div id="app">
+// mount node (Inertia v3 shape).
 func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component string, props Props) {
 	info := FromRequest(r)
 	currentVer := i.currentVersion(r)
@@ -177,6 +180,24 @@ func (i *Inertia) writeJSON(w http.ResponseWriter, r *http.Request, page PageObj
 	_, _ = w.Write(body)
 }
 
+var (
+	closeScriptToken   = []byte("</script")
+	closeScriptEscaped = []byte(`\u003c/script`)
+)
+
+// renderScriptSafe returns the v3 initial-HTML body: a <script
+// data-page="app" type="application/json"> element carrying the
+// PageObject JSON, followed by the empty <div id="app"> mount node.
+// Any literal </script byte sequence in the payload is rewritten to the
+// JSON-legal unicode escape </script so a hostile prop value cannot
+// terminate the script block early. (json.Marshal already escapes < to
+// <, so this is defense-in-depth for callers that pass raw bytes.)
+func renderScriptSafe(body []byte) string {
+	safe := bytes.ReplaceAll(body, closeScriptToken, closeScriptEscaped)
+	return `<script data-page="app" type="application/json">` + string(safe) +
+		`</script>` + `<div id="app"></div>`
+}
+
 func (i *Inertia) writeHTML(w http.ResponseWriter, r *http.Request, page PageObject) {
 	body, err := json.Marshal(page)
 	if err != nil {
@@ -185,7 +206,7 @@ func (i *Inertia) writeHTML(w http.ResponseWriter, r *http.Request, page PageObj
 	}
 	data := RootData{
 		InertiaHead: "",
-		InertiaBody: template.HTML(fmt.Sprintf(`<div id="app" data-page='%s'></div>`, string(body))),
+		InertiaBody: template.HTML(renderScriptSafe(body)),
 		Component:   page.Component,
 		URL:         page.URL,
 		Version:     page.Version,

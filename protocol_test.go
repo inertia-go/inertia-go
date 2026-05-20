@@ -132,10 +132,14 @@ func TestProtocol_InitialHTMLContainsAppDiv(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if !strings.Contains(rec.Body.String(), `id="app"`) {
-		t.Errorf("missing app div: %s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, `<script data-page="app" type="application/json">`) {
+		t.Errorf("missing v3 script tag: %s", body)
 	}
-	if !strings.Contains(rec.Body.String(), "data-page=") {
-		t.Errorf("missing data-page: %s", rec.Body.String())
+	if !strings.Contains(body, `<div id="app"></div>`) {
+		t.Errorf("missing mount div: %s", body)
+	}
+	if strings.Contains(body, `data-page='`) {
+		t.Errorf("legacy single-quoted data-page attribute must be gone: %s", body)
 	}
 }

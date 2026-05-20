@@ -65,7 +65,7 @@ type ViteHelper interface {
 // Render is invoked once per initial HTML response — Inertia XHR
 // requests skip SSR. The page argument is the already-serialized
 // PageObject, identical to the bytes that would otherwise be embedded
-// in <div id="app" data-page='...'>.
+// inside the <script data-page="app" type="application/json"> element.
 //
 // The returned head and body are injected verbatim into the root
 // template as template.HTML, bypassing html/template auto-escaping.

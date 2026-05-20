@@ -13,7 +13,7 @@ func TestRenderRootHTML_FallbackTemplate(t *testing.T) {
 	i, _ := New(Config{Session: stubSession{}})
 	var buf bytes.Buffer
 	err := i.renderRoot(&buf, RootData{
-		InertiaBody: `<div id="app" data-page="{}"></div>`,
+		InertiaBody: `<script data-page="app" type="application/json">{}</script><div id="app"></div>`,
 	})
 	if err != nil {
 		t.Fatal(err)
