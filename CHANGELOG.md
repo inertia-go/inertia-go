@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-05-20
+
+### Added
+
+- **Precognition support.** `(*Inertia).Precognition(w, r) bool` handles a
+  precognitive validation request: writes `204 No Content` +
+  `Precognition-Success: true` when the validation errors collected via
+  `ValidationErrors(r)` are empty, or `422` with a `{errors: {...}}` JSON
+  body otherwise, returning `true` so the handler returns. Reads the same
+  error bag the normal redirect-flash path uses; nothing is flashed.
+- `RequestInfo.IsPrecognition` and `RequestInfo.ValidateOnly` parsed from
+  the `Precognition` and `Precognition-Validate-Only` request headers.
+- `Vary: Precognition` emitted on precognitive requests.
+- `Precognition-Validate-Only` filters which collected errors are reported;
+  an empty filtered set yields `204`.
+
+### Note
+
+- Unlike Laravel, there is no middleware that auto-runs validation rules
+  and short-circuits the handler — the handler validates and calls
+  `Precognition` explicitly (the Go-idiomatic boundary).
+
 ## [0.7.0] — 2026-05-20
 
 ### BREAKING

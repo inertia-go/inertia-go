@@ -77,6 +77,7 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - Infinite scroll: `inertia.Scroll(metadata, func() any { ... }, inertia.WithWrapper("items"), inertia.WithPageName("orders"))` — `metadata` resolves through the `ScrollAdapter` registry (`inertia.RegisterScrollAdapter`); a bare `map[string]any{"pageName","currentPage","previousPage","nextPage"}` or a `ScrollConfig` works out of the box. The data callback is lazy (run only when the prop is included).
 - Page meta: `Config.PreserveFragment`, `inertia.SetPreserveFragment(r, bool)`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
+- Precognition: `(*Inertia).Precognition(w, r) bool` — on a `Precognition: true` request, writes `204 + Precognition-Success` when `ValidationErrors(r)` is empty (filtered by `Precognition-Validate-Only`), or `422 {errors:{...}}` otherwise; returns `true` so the handler returns. Call it after your own validation. Exposed via `FromRequest(r).IsPrecognition` / `.ValidateOnly`
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
 - Vite: `vite.Load`, `vite.MustLoad`, `vite.Dev` (satisfies `inertia.ViteHelper`)
 - SSR: `ssr.NewHTTP` (satisfies `inertia.SSRClient`)
@@ -108,7 +109,15 @@ without backward compatibility for v1 or v2.
 | `preserveFragment` page meta | ✅ |
 | SSR HTTP client | ✅ |
 | Vite manifest helper | ✅ |
-| Precognition | Out of scope |
+| Precognition (validate-only primitive) | ✅ |
+
+> **Precognition note:** Unlike Laravel's `HandlePrecognitiveRequests`
+> middleware, inertia-go does not auto-run validation rules or skip the
+> handler body. Your handler runs its own validation (`ValidationErrors(r).Add`)
+> and calls `inertia.Precognition(w, r)`; on a precognitive request it
+> writes the `204`/`422` response and returns `true` so you can `return`
+> before performing the real action. This is the deliberate Go-idiomatic
+> boundary.
 
 ## Vite Manifest
 
