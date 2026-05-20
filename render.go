@@ -22,6 +22,18 @@ type PageObject struct {
 	MergeProps     []string            `json:"mergeProps,omitempty"`
 	DeepMergeProps []string            `json:"deepMergeProps,omitempty"`
 	DeferredProps  map[string][]string `json:"deferredProps,omitempty"`
+
+	// v0.4 — added with their populating code paths.
+	PrependProps []string `json:"prependProps,omitempty"`
+	MatchPropsOn []string `json:"matchPropsOn,omitempty"`
+	SharedProps  []string `json:"sharedProps,omitempty"`
+
+	// Reserved for v0.5: declared on the struct so a future minor release
+	// adding wrappers does not change the public JSON shape. v0.4 code
+	// paths never write to them.
+	ScrollProps  map[string]map[string]any `json:"scrollProps,omitempty"`
+	OnceProps    map[string]map[string]any `json:"onceProps,omitempty"`
+	RescuedProps []string                  `json:"rescuedProps,omitempty"`
 }
 
 // Render writes an Inertia response for the given component and props.

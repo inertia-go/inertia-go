@@ -186,3 +186,32 @@ func TestProtocol_DeferredMetadataOnInitial(t *testing.T) {
 		t.Errorf("activity must not be evaluated on initial response: %v", page.Props)
 	}
 }
+
+func TestProtocol_PageObject_HasV3Fields(t *testing.T) {
+	// Compile-time assertion: PageObject must have all v3 fields so
+	// downstream code can populate them. This test catches struct-shape
+	// regressions before the wrappers wire up.
+	var p PageObject
+	_ = p.PrependProps
+	_ = p.MatchPropsOn
+	_ = p.SharedProps
+	_ = p.ScrollProps
+	_ = p.OnceProps
+	_ = p.RescuedProps
+
+	// Sanity-check JSON tags via marshal: all six should be omitempty
+	// (nil-valued in this zero-value page).
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, tag := range []string{
+		"prependProps", "matchPropsOn", "sharedProps",
+		"scrollProps", "onceProps", "rescuedProps",
+	} {
+		if strings.Contains(js, tag) {
+			t.Errorf("zero-value PageObject must not emit %q (need omitempty): %s", tag, js)
+		}
+	}
+}
