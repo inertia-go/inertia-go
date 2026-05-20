@@ -1,0 +1,14 @@
+{
+  "_shared-vendor.js": {
+    "file": "assets/shared-vendor-Bgf4jPYC.js",
+    "name": "vendor"
+  },
+  "resources/js/app.tsx": {
+    "src": "resources/js/app.tsx",
+    "name": "app",
+    "file": "assets/app-DvPpZ7K3.js",
+    "isEntry": true,
+    "imports": ["_shared-vendor.js"],
+    "css": ["assets/app-CKdMlqEs.css"]
+  }
+}
