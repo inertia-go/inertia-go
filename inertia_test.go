@@ -52,3 +52,16 @@ func TestNew_RejectsMultipleVersionSources(t *testing.T) {
 		}
 	}
 }
+
+type flusherStub struct{ called bool }
+
+func (f *flusherStub) FlushResponse(_ http.ResponseWriter) error {
+	f.called = true
+	return nil
+}
+
+func TestSessionFlusher_InterfaceIsSatisfied(t *testing.T) {
+	// Compile-time assertion that *flusherStub satisfies SessionFlusher,
+	// and that the interface lives in the main package.
+	var _ SessionFlusher = &flusherStub{}
+}

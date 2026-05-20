@@ -34,6 +34,16 @@ type SessionStore interface {
 	TakeMessages(w http.ResponseWriter, r *http.Request) (map[string]any, error)
 }
 
+// SessionFlusher is an optional capability a SessionStore may implement
+// to defer writing the response cookie until the end of the HTTP
+// request. inertia.Middleware calls FlushResponse via a deferred hook
+// so multiple Flash*/Take* operations in a single response accumulate
+// into one Set-Cookie. Stores that don't implement this interface
+// continue to write eagerly per call.
+type SessionFlusher interface {
+	FlushResponse(w http.ResponseWriter) error
+}
+
 // RootData is passed to the root template (default or RootRender hook).
 type RootData struct {
 	InertiaHead template.HTML
