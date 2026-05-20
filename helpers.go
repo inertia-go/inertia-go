@@ -44,6 +44,20 @@ func (b *bagHandle) Add(field, message string) *bagHandle {
 	return b
 }
 
+// snapshot returns a copy of the field→message map for the named bag
+// (empty name = the default unnamed bag). The copy is safe to mutate and
+// to read without holding the collector's mutex. Returns an empty map when
+// the bag has no entries.
+func (e *ErrorBagCollector) snapshot(bag string) map[string]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]string, len(e.entries[bag]))
+	for k, v := range e.entries[bag] {
+		out[k] = v
+	}
+	return out
+}
+
 // FlashCollector accumulates flash messages for a single request.
 type FlashCollector struct {
 	mu      sync.Mutex

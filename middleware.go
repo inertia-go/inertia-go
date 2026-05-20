@@ -22,6 +22,12 @@ type RequestInfo struct {
 	// protocol assigns no mandatory server behavior; handlers may use it to
 	// skip expensive side effects on speculative prefetch requests.
 	IsPrefetch bool
+	// IsPrecognition reports whether the client sent Precognition: true,
+	// a request to validate without performing the action.
+	IsPrecognition bool
+	// ValidateOnly is the parsed Precognition-Validate-Only header — the
+	// subset of fields the client wants validated.
+	ValidateOnly []string
 }
 
 type ctxKey int
@@ -85,6 +91,9 @@ func (i *Inertia) Middleware(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, ctxKeySessionFlash, sessFlash)
 
 		w.Header().Add("Vary", "X-Inertia")
+		if info.IsPrecognition {
+			w.Header().Add("Vary", "Precognition")
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -101,6 +110,8 @@ func parseRequestInfo(r *http.Request) RequestInfo {
 		ExceptOnceProps:   splitCSV(r.Header.Get("X-Inertia-Except-Once-Props")),
 		ScrollMergeIntent: r.Header.Get("X-Inertia-Infinite-Scroll-Merge-Intent"),
 		IsPrefetch:        r.Header.Get("Purpose") == "prefetch",
+		IsPrecognition:    r.Header.Get("Precognition") == "true",
+		ValidateOnly:      splitCSV(r.Header.Get("Precognition-Validate-Only")),
 	}
 }
 

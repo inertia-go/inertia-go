@@ -3,6 +3,46 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-05-20
+
+### Added
+
+- **Precognition support.** `(*Inertia).Precognition(w, r) bool` handles a
+  precognitive validation request: writes `204 No Content` +
+  `Precognition-Success: true` when the validation errors collected via
+  `ValidationErrors(r)` are empty, or `422` with a `{errors: {...}}` JSON
+  body otherwise, returning `true` so the handler returns. Reads the same
+  error bag the normal redirect-flash path uses; nothing is flashed.
+- `(*Inertia).HandlePrecognition(w, r, validate)` — an optional wrapper over
+  `Precognition` that runs a `validate func(*http.Request)` (which records
+  errors via `ValidationErrors(r).Add`) then delegates, removing the
+  validate-then-check boilerplate. `validate` runs on every request, so its
+  errors remain available for the redirect-flash path on non-precognitive
+  requests.
+- `RequestInfo.IsPrecognition` and `RequestInfo.ValidateOnly` parsed from
+  the `Precognition` and `Precognition-Validate-Only` request headers.
+- `Vary: Precognition` emitted on precognitive requests.
+- `Precognition-Validate-Only` filters which collected errors are reported;
+  an empty filtered set yields `204`.
+
+### Fixed
+
+- `Once(fn).As(alias)` wire format: `onceProps[alias].prop` now reports the
+  actual page-prop name, not the alias. Per the v3 protocol the onceProps
+  key is the cache key (the alias) while `prop` is the prop the cached value
+  populates. Previously both were set to the alias.
+- Nested `Merge(data).Prepend(path)` / `.Append(path)` no longer also lists
+  the root key in `mergeProps`. A nested target merges only the nested path
+  and replaces the rest of the object, so only `<key>.<path>` is emitted
+  (in `prependProps` / `mergeProps`); the root key is omitted. `matchOn`
+  alone still merges at the root.
+
+### Note
+
+- Unlike Laravel, there is no middleware that auto-runs validation rules
+  and short-circuits the handler — the handler validates and calls
+  `Precognition` explicitly (the Go-idiomatic boundary).
+
 ## [0.7.0] — 2026-05-20
 
 ### BREAKING

@@ -380,8 +380,14 @@ func TestProtocol_OnceProps_AsAliasCacheSkip(t *testing.T) {
 	if _, ok := first.Props["plans"]; !ok {
 		t.Error("without except header, aliased once prop must be present in props")
 	}
-	if got := first.OnceProps["billing"]; got.Prop != "billing" {
-		t.Errorf("onceProps[billing] = %+v, want prop=billing", got)
+	// onceProps is keyed by the cache key ("billing", the .As() alias), but
+	// the prop field is the actual page-prop name ("plans") per the v3
+	// protocol — the client maps the cached value back to the right prop.
+	if _, ok := first.OnceProps["billing"]; !ok {
+		t.Errorf("onceProps must be keyed by the alias 'billing': %+v", first.OnceProps)
+	}
+	if got := first.OnceProps["billing"]; got.Prop != "plans" {
+		t.Errorf("onceProps[billing].prop = %q, want plans (the real prop name)", got.Prop)
 	}
 	cached := mk("billing")
 	if _, ok := cached.Props["plans"]; ok {
@@ -591,5 +597,78 @@ func TestProtocol_NestedPrependPath(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("prependProps must contain chat.messages: %v", page.PrependProps)
+	}
+	// A nested prepend target merges only chat.messages and replaces the
+	// rest of chat, so the root "chat" key must NOT appear in mergeProps.
+	for _, m := range page.MergeProps {
+		if m == "chat" {
+			t.Errorf("root 'chat' must not be in mergeProps for a nested prepend: %v", page.MergeProps)
+		}
+	}
+}
+
+// TestProtocol_PrecognitionEndToEnd drives the full precognition flow over a
+// real http server: a handler validates, calls Precognition, and returns
+// early on a precognitive request. Clean input → 204 + Precognition-Success;
+// bad input → 422 + errors JSON; the real action (and its redirect) never
+// runs on a precognitive request.
+func TestProtocol_PrecognitionEndToEnd(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	actionRan := false
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("name") == "" {
+			ValidationErrors(r).Add("name", "required")
+		}
+		if i.Precognition(w, r) {
+			return
+		}
+		actionRan = true
+		i.Redirect(w, r, "/done")
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	// Clean precognitive request → 204 + Precognition-Success, action NOT run.
+	reqOK, _ := http.NewRequest(http.MethodGet, srv.URL+"/submit?name=ada", nil)
+	reqOK.Header.Set("Precognition", "true")
+	respOK, err := client.Do(reqOK)
+	if err != nil {
+		t.Fatalf("clean precog: %v", err)
+	}
+	_ = respOK.Body.Close()
+	if respOK.StatusCode != http.StatusNoContent {
+		t.Errorf("clean precog status = %d, want 204", respOK.StatusCode)
+	}
+	if respOK.Header.Get("Precognition-Success") != "true" {
+		t.Error("clean precog missing Precognition-Success")
+	}
+	if actionRan {
+		t.Error("real action must not run on a precognitive request")
+	}
+
+	// Bad precognitive request → 422 + errors, action NOT run.
+	reqBad, _ := http.NewRequest(http.MethodGet, srv.URL+"/submit", nil)
+	reqBad.Header.Set("Precognition", "true")
+	respBad, err := client.Do(reqBad)
+	if err != nil {
+		t.Fatalf("bad precog: %v", err)
+	}
+	defer func() { _ = respBad.Body.Close() }()
+	if respBad.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("bad precog status = %d, want 422", respBad.StatusCode)
+	}
+	var body map[string]map[string]string
+	if err := json.NewDecoder(respBad.Body).Decode(&body); err != nil {
+		t.Fatalf("decode 422 body: %v", err)
+	}
+	if body["errors"]["name"] != "required" {
+		t.Errorf("422 body = %v, want errors.name=required", body)
+	}
+	if actionRan {
+		t.Error("real action must not run on a failed precognitive request")
 	}
 }

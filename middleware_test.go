@@ -293,6 +293,59 @@ func TestMiddleware_ParsesExceptOnceProps(t *testing.T) {
 	}
 }
 
+func TestMiddleware_ParsesPrecognition(t *testing.T) {
+	i := newTestInertia(t)
+	var seen RequestInfo
+	var varyVals []string
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = FromRequest(r)
+		varyVals = w.Header().Values("Vary")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/submit", nil)
+	req.Header.Set("Precognition", "true")
+	req.Header.Set("Precognition-Validate-Only", "name, email")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if !seen.IsPrecognition {
+		t.Error("IsPrecognition: want true")
+	}
+	if got, want := seen.ValidateOnly, []string{"name", "email"}; !equalStrings(got, want) {
+		t.Errorf("ValidateOnly = %v, want %v", got, want)
+	}
+	if !containsStr(varyVals, "Precognition") {
+		t.Errorf("Vary must include Precognition, got %v", varyVals)
+	}
+	if !containsStr(varyVals, "X-Inertia") {
+		t.Errorf("Vary must include X-Inertia, got %v", varyVals)
+	}
+
+	plain := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, plain)
+	if seen.IsPrecognition {
+		t.Error("absent Precognition header must leave IsPrecognition false")
+	}
+	plainVary := rec2.Header().Values("Vary")
+	if containsStr(plainVary, "Precognition") {
+		t.Errorf("non-precognition response must not Vary: Precognition, got %v", plainVary)
+	}
+	if !containsStr(plainVary, "X-Inertia") {
+		t.Errorf("non-precognition response must still Vary: X-Inertia, got %v", plainVary)
+	}
+}
+
+func containsStr(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
