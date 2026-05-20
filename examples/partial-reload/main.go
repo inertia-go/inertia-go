@@ -70,7 +70,7 @@ func main() {
 			"user":     inertia.Always(currentUser()),
 			"stats":    inertia.Optional(loadExpensiveStats),
 			"activity": inertia.Defer(loadActivity, "feed").Rescue(),
-			"plans":    inertia.Once(loadPlans),
+			"plans":    inertia.Once(loadPlans).ExpiresIn(time.Hour),
 		})
 	})
 
