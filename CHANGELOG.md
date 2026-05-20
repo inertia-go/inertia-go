@@ -19,6 +19,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Precognition-Validate-Only` filters which collected errors are reported;
   an empty filtered set yields `204`.
 
+### Fixed
+
+- `Once(fn).As(alias)` wire format: `onceProps[alias].prop` now reports the
+  actual page-prop name, not the alias. Per the v3 protocol the onceProps
+  key is the cache key (the alias) while `prop` is the prop the cached value
+  populates. Previously both were set to the alias.
+- Nested `Merge(data).Prepend(path)` / `.Append(path)` no longer also lists
+  the root key in `mergeProps`. A nested target merges only the nested path
+  and replaces the rest of the object, so only `<key>.<path>` is emitted
+  (in `prependProps` / `mergeProps`); the root key is omitted. `matchOn`
+  alone still merges at the root.
+
 ### Note
 
 - Unlike Laravel, there is no middleware that auto-runs validation rules

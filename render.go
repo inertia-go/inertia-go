@@ -229,7 +229,12 @@ func (m *propMarkers) collect(key string, v any, exceptOnce, requested map[strin
 	if !ok {
 		return false, false, false
 	}
-	if b.merge {
+	// A nested target (Prepend/Append at a sub-path) merges only that path
+	// and replaces the rest of the object, so the root key must NOT enter
+	// mergeProps. matchOn alone is a list-reconciliation strategy, not a
+	// nested target, so it leaves the root merge in place.
+	nestedTarget := len(b.prependPath) > 0 || len(b.appendPath) > 0
+	if b.merge && !nestedTarget {
 		m.mergeKeys = append(m.mergeKeys, key)
 	}
 	if b.deepMerge {
@@ -266,7 +271,12 @@ func (m *propMarkers) collectOnce(key string, b *propBuilder, exceptOnce, reques
 		ms := time.Now().Add(b.onceTTL).UnixMilli()
 		exp = &ms
 	}
-	m.onceProps[onceKey] = OnceConfig{Prop: onceKey, ExpiresAt: exp}
+	// onceProps is keyed by the cache key (the .As() alias, or the prop
+	// name when no alias). The Prop field is the actual page-prop name, so a
+	// client knows which prop the cached value populates. They differ only
+	// under .As(): Once(fn).As("billing") on prop "plans" → key "billing",
+	// Prop "plans".
+	m.onceProps[onceKey] = OnceConfig{Prop: key, ExpiresAt: exp}
 	return exceptOnce[onceKey] && !requested[key] && !b.onceFresh
 }
 

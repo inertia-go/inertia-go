@@ -380,8 +380,14 @@ func TestProtocol_OnceProps_AsAliasCacheSkip(t *testing.T) {
 	if _, ok := first.Props["plans"]; !ok {
 		t.Error("without except header, aliased once prop must be present in props")
 	}
-	if got := first.OnceProps["billing"]; got.Prop != "billing" {
-		t.Errorf("onceProps[billing] = %+v, want prop=billing", got)
+	// onceProps is keyed by the cache key ("billing", the .As() alias), but
+	// the prop field is the actual page-prop name ("plans") per the v3
+	// protocol — the client maps the cached value back to the right prop.
+	if _, ok := first.OnceProps["billing"]; !ok {
+		t.Errorf("onceProps must be keyed by the alias 'billing': %+v", first.OnceProps)
+	}
+	if got := first.OnceProps["billing"]; got.Prop != "plans" {
+		t.Errorf("onceProps[billing].prop = %q, want plans (the real prop name)", got.Prop)
 	}
 	cached := mk("billing")
 	if _, ok := cached.Props["plans"]; ok {
@@ -591,6 +597,13 @@ func TestProtocol_NestedPrependPath(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("prependProps must contain chat.messages: %v", page.PrependProps)
+	}
+	// A nested prepend target merges only chat.messages and replaces the
+	// rest of chat, so the root "chat" key must NOT appear in mergeProps.
+	for _, m := range page.MergeProps {
+		if m == "chat" {
+			t.Errorf("root 'chat' must not be in mergeProps for a nested prepend: %v", page.MergeProps)
+		}
 	}
 }
 
