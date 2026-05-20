@@ -9,13 +9,15 @@ import (
 // RequestInfo captures the Inertia-specific request state.
 // Retrieve it inside a handler via FromRequest(r).
 type RequestInfo struct {
-	IsInertia        bool
-	Version          string
-	PartialData      []string
-	PartialComponent string
-	PartialExcept    []string
-	Reset            []string
-	ErrorBag         string
+	IsInertia         bool
+	Version           string
+	PartialData       []string
+	PartialComponent  string
+	PartialExcept     []string
+	Reset             []string
+	ErrorBag          string
+	ExceptOnceProps   []string
+	ScrollMergeIntent string
 }
 
 type ctxKey int
@@ -85,13 +87,15 @@ func (i *Inertia) Middleware(next http.Handler) http.Handler {
 
 func parseRequestInfo(r *http.Request) RequestInfo {
 	return RequestInfo{
-		IsInertia:        r.Header.Get("X-Inertia") == "true",
-		Version:          r.Header.Get("X-Inertia-Version"),
-		PartialData:      splitCSV(r.Header.Get("X-Inertia-Partial-Data")),
-		PartialComponent: r.Header.Get("X-Inertia-Partial-Component"),
-		PartialExcept:    splitCSV(r.Header.Get("X-Inertia-Partial-Except")),
-		Reset:            splitCSV(r.Header.Get("X-Inertia-Reset")),
-		ErrorBag:         r.Header.Get("X-Inertia-Error-Bag"),
+		IsInertia:         r.Header.Get("X-Inertia") == "true",
+		Version:           r.Header.Get("X-Inertia-Version"),
+		PartialData:       splitCSV(r.Header.Get("X-Inertia-Partial-Data")),
+		PartialComponent:  r.Header.Get("X-Inertia-Partial-Component"),
+		PartialExcept:     splitCSV(r.Header.Get("X-Inertia-Partial-Except")),
+		Reset:             splitCSV(r.Header.Get("X-Inertia-Reset")),
+		ErrorBag:          r.Header.Get("X-Inertia-Error-Bag"),
+		ExceptOnceProps:   splitCSV(r.Header.Get("X-Inertia-Except-Once-Props")),
+		ScrollMergeIntent: r.Header.Get("X-Inertia-Infinite-Scroll-Merge-Intent"),
 	}
 }
 

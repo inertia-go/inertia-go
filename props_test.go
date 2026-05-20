@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestAlways_AlwaysIncluded(t *testing.T) {
@@ -213,6 +214,30 @@ func TestPrepend_AppearsInPageObject(t *testing.T) {
 	}
 	if !reflect.DeepEqual(page.PrependProps, []string{"items"}) {
 		t.Errorf("prependProps: %v", page.PrependProps)
+	}
+}
+
+func TestOnce_WrapperBehavior(t *testing.T) {
+	o := Once(func() (any, error) { return []int{1}, nil })
+	v, err := o.evaluate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(v, []int{1}) {
+		t.Errorf("evaluate: %v", v)
+	}
+	if !o.isOnce() {
+		t.Error("Once must report isOnce")
+	}
+	if !o.evaluateEager() {
+		t.Error("Once must be eager (sent on first load)")
+	}
+	if o.onceTTL() != 0 {
+		t.Errorf("default TTL must be 0; got %v", o.onceTTL())
+	}
+	withTTL := Once(func() (any, error) { return 1, nil }).ExpiresIn(time.Hour)
+	if withTTL.onceTTL() != time.Hour {
+		t.Errorf("ExpiresIn TTL: %v", withTTL.onceTTL())
 	}
 }
 

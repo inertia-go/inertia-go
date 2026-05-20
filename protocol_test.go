@@ -312,6 +312,43 @@ func TestProtocol_RescuedProps_DropsFailedDeferred(t *testing.T) {
 	}
 }
 
+func TestProtocol_OnceProps_FirstLoadAndCached(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	mk := func(except string) PageObject {
+		h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			i.Render(w, r, "Billing", Props{
+				"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }),
+			})
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+		req.Header.Set("X-Inertia", "true")
+		if except != "" {
+			req.Header.Set("X-Inertia-Except-Once-Props", except)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var p PageObject
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	first := mk("")
+	if _, ok := first.Props["plans"]; !ok {
+		t.Error("first load must include plans in props")
+	}
+	if got := first.OnceProps["plans"]; got.Prop != "plans" || got.ExpiresAt != nil {
+		t.Errorf("onceProps[plans] = %+v, want {plans, nil}", got)
+	}
+	cached := mk("plans")
+	if _, ok := cached.Props["plans"]; ok {
+		t.Error("cached once prop must be omitted from props")
+	}
+	if _, ok := cached.OnceProps["plans"]; !ok {
+		t.Error("onceProps metadata must persist on cached response")
+	}
+}
+
 func TestProtocol_NoRescue_StillFailsResponse(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

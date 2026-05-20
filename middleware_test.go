@@ -253,6 +253,22 @@ func newCookieInertia(t *testing.T) *Inertia {
 	return i
 }
 
+func TestMiddleware_ParsesExceptOnceProps(t *testing.T) {
+	i := newTestInertia(t)
+	var seen RequestInfo
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = FromRequest(r)
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Inertia-Except-Once-Props", "plans, billing")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got, want := seen.ExceptOnceProps, []string{"plans", "billing"}; !equalStrings(got, want) {
+		t.Errorf("ExceptOnceProps = %v, want %v", got, want)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

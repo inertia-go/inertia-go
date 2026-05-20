@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // PageObject is the JSON shape Inertia sends to the client.
@@ -94,6 +95,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 		PrependProps:     resolved.prependKeys,
 		MatchPropsOn:     resolved.matchPropsOn,
 		SharedProps:      i.sharedKeysSnapshot(),
+		OnceProps:        resolved.onceProps,
 		RescuedProps:     resolved.rescued,
 		PreserveFragment: i.resolvePreserveFragment(r),
 	}
@@ -189,22 +191,24 @@ type resolvedProps struct {
 	matchPropsOn  []string
 	deferred      map[string][]string
 	rescued       []string
+	onceProps     map[string]OnceConfig
 }
 
 // propMarkers accumulates the per-wrapper key lists that populate the
-// PageObject (mergeProps, deepMergeProps, prependProps, matchPropsOn).
-// Collected synchronously in the keep-loop before evaluation fans out.
+// PageObject (mergeProps, deepMergeProps, prependProps, matchPropsOn,
+// onceProps). Collected synchronously in the keep-loop before evaluation fans out.
 type propMarkers struct {
 	mergeKeys   []string
 	deepKeys    []string
 	prependKeys []string
 	matchOn     []string
+	onceProps   map[string]OnceConfig
 }
 
 // collect classifies a single wrapped prop, appending its key to the
 // relevant marker lists. Returns whether the prop should be rescued on
-// evaluation error.
-func (m *propMarkers) collect(key string, wrap propWrapper) (rescue bool) {
+// evaluation error and whether it should be skipped (client has it cached).
+func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[string]bool) (rescue, skip bool) {
 	if wrap.isMerge() {
 		m.mergeKeys = append(m.mergeKeys, key)
 	}
@@ -217,7 +221,18 @@ func (m *propMarkers) collect(key string, wrap propWrapper) (rescue bool) {
 	for _, mk := range wrap.matchOnKeys() {
 		m.matchOn = append(m.matchOn, key+"."+mk)
 	}
-	return wrap.rescueOnError()
+	if wrap.isOnce() {
+		var exp *int64
+		if ttl := wrap.onceTTL(); ttl > 0 {
+			ms := time.Now().Add(ttl).UnixMilli()
+			exp = &ms
+		}
+		m.onceProps[key] = OnceConfig{Prop: key, ExpiresAt: exp}
+		if exceptOnce[key] {
+			skip = true
+		}
+	}
+	return wrap.rescueOnError(), skip
 }
 
 // evaluatePropsFor evaluates the subset of props identified by keep and
@@ -229,7 +244,7 @@ func (m *propMarkers) collect(key string, wrap propWrapper) (rescue bool) {
 // HTML) but is left empty on partial responses (the client uses metadata
 // from the initial response, not subsequent partials).
 func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, isPartial bool) (resolvedProps, error) {
-	_ = r // reserved for future Defer-with-context evaluation.
+	exceptOnce := setOf(FromRequest(r).ExceptOnceProps)
 
 	out := make(map[string]any, len(keep))
 	var (
@@ -253,7 +268,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		}
 	}
 
-	markers := &propMarkers{}
+	markers := &propMarkers{onceProps: map[string]OnceConfig{}}
 	for _, k := range keep {
 		v, ok := all[k]
 		if !ok {
@@ -261,7 +276,11 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		}
 		rescue := false
 		if wrap, isWrap := asWrapper(v); isWrap {
-			rescue = markers.collect(k, wrap)
+			var skip bool
+			rescue, skip = markers.collect(k, wrap, exceptOnce)
+			if skip {
+				continue // client has it cached; don't resolve or include
+			}
 		}
 		wg.Add(1)
 		go func(key string, raw any, rescuable bool) {
@@ -294,6 +313,10 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 	if len(deferredMap) == 0 {
 		deferredMap = nil
 	}
+	onceProps := markers.onceProps
+	if len(onceProps) == 0 {
+		onceProps = nil
+	}
 	return resolvedProps{
 		values:        out,
 		mergeKeys:     markers.mergeKeys,
@@ -302,6 +325,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		matchPropsOn:  markers.matchOn,
 		deferred:      deferredMap,
 		rescued:       rescued,
+		onceProps:     onceProps,
 	}, nil
 }
 

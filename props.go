@@ -226,6 +226,37 @@ func (matchOnWrap) isOnce() bool                { return false }
 func (matchOnWrap) onceTTL() time.Duration      { return 0 }
 func (matchOnWrap) scrollConfig() *ScrollConfig { return nil }
 
+// onceWrap marks a lazily-evaluated prop that the client caches and reuses
+// across navigations. The server emits onceProps metadata and, when the
+// client reports the key as already loaded via X-Inertia-Except-Once-Props,
+// skips resolving it and omits it from props.
+type onceWrap struct {
+	fn  func() (any, error)
+	ttl time.Duration
+}
+
+// Once wraps a callback whose result the client caches once and reuses on
+// subsequent navigations. By default the cache never expires; chain
+// .ExpiresIn(d) to set a TTL.
+func Once(fn func() (any, error)) onceWrap { return onceWrap{fn: fn} }
+
+// ExpiresIn sets how long the client may reuse the cached value before
+// re-fetching. Zero (the default) means never expires.
+func (o onceWrap) ExpiresIn(d time.Duration) onceWrap { o.ttl = d; return o }
+
+func (o onceWrap) evaluate() (any, error)    { return o.fn() }
+func (onceWrap) evaluateEager() bool         { return true }
+func (onceWrap) alwaysInclude() bool         { return false }
+func (onceWrap) isMerge() bool               { return false }
+func (onceWrap) isDeepMerge() bool           { return false }
+func (onceWrap) isPrepend() bool             { return false }
+func (onceWrap) matchOnKeys() []string       { return nil }
+func (onceWrap) deferGroup() string          { return "" }
+func (onceWrap) rescueOnError() bool         { return false }
+func (onceWrap) isOnce() bool                { return true }
+func (o onceWrap) onceTTL() time.Duration    { return o.ttl }
+func (onceWrap) scrollConfig() *ScrollConfig { return nil }
+
 // asWrapper returns w as a propWrapper if it is one, plus ok=true.
 func asWrapper(v any) (propWrapper, bool) {
 	w, ok := v.(propWrapper)
