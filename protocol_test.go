@@ -349,6 +349,37 @@ func TestProtocol_OnceProps_FirstLoadAndCached(t *testing.T) {
 	}
 }
 
+// TestProtocol_OnceProps_ExplicitPartialForcesRefresh verifies the v3 rule
+// that an explicit partial reload (X-Inertia-Partial-Data lists the key)
+// re-resolves a once prop even when the client also reports it cached via
+// X-Inertia-Except-Once-Props. The explicit request wins over the cache skip.
+func TestProtocol_OnceProps_ExplicitPartialForcesRefresh(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Billing", Props{
+			"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Billing")
+	req.Header.Set("X-Inertia-Partial-Data", "plans")
+	req.Header.Set("X-Inertia-Except-Once-Props", "plans")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var p PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.Props["plans"]; !ok {
+		t.Errorf("explicit Partial-Data must force re-resolve of once prop despite Except-Once-Props: %v", p.Props)
+	}
+	if _, ok := p.OnceProps["plans"]; !ok {
+		t.Error("onceProps metadata must still be emitted on forced refresh")
+	}
+}
+
 func TestProtocol_NoRescue_StillFailsResponse(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -214,7 +214,12 @@ type propMarkers struct {
 // evaluation error, whether it should be skipped (client has it cached),
 // and whether it is a Scroll wrapper (so the evaluator can wrap its value
 // as {data: ...}).
-func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[string]bool) (rescue, skip, scroll bool) {
+//
+// A once prop is skipped only when the client reports it cached
+// (exceptOnce) AND it was not explicitly requested by a partial reload
+// (requested). Per the v3 protocol, an explicit X-Inertia-Partial-Data
+// request forces the server to re-resolve a once prop even if cached.
+func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce, requested map[string]bool) (rescue, skip, scroll bool) {
 	if wrap.isMerge() {
 		m.mergeKeys = append(m.mergeKeys, key)
 	}
@@ -234,7 +239,7 @@ func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[strin
 			exp = &ms
 		}
 		m.onceProps[key] = OnceConfig{Prop: key, ExpiresAt: exp}
-		if exceptOnce[key] {
+		if exceptOnce[key] && !requested[key] {
 			skip = true
 		}
 	}
@@ -255,7 +260,9 @@ func (m *propMarkers) collect(key string, wrap propWrapper, exceptOnce map[strin
 // HTML) but is left empty on partial responses (the client uses metadata
 // from the initial response, not subsequent partials).
 func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, isPartial bool) (resolvedProps, error) {
-	exceptOnce := setOf(FromRequest(r).ExceptOnceProps)
+	info := FromRequest(r)
+	exceptOnce := setOf(info.ExceptOnceProps)
+	requested := setOf(info.PartialData)
 
 	out := make(map[string]any, len(keep))
 	var (
@@ -289,7 +296,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		scroll := false
 		if wrap, isWrap := asWrapper(v); isWrap {
 			var skip bool
-			rescue, skip, scroll = markers.collect(k, wrap, exceptOnce)
+			rescue, skip, scroll = markers.collect(k, wrap, exceptOnce, requested)
 			if skip {
 				continue // client has it cached; don't resolve or include
 			}
