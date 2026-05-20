@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/inertia-go/inertia-go/session"
@@ -297,10 +296,10 @@ func TestMiddleware_ParsesExceptOnceProps(t *testing.T) {
 func TestMiddleware_ParsesPrecognition(t *testing.T) {
 	i := newTestInertia(t)
 	var seen RequestInfo
-	var varyHdr string
+	var varyVals []string
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = FromRequest(r)
-		varyHdr = w.Header().Get("Vary")
+		varyVals = w.Header().Values("Vary")
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -316,8 +315,11 @@ func TestMiddleware_ParsesPrecognition(t *testing.T) {
 	if got, want := seen.ValidateOnly, []string{"name", "email"}; !equalStrings(got, want) {
 		t.Errorf("ValidateOnly = %v, want %v", got, want)
 	}
-	if !strings.Contains(varyHdr, "Precognition") {
-		t.Errorf("Vary must include Precognition, got %q", varyHdr)
+	if !containsStr(varyVals, "Precognition") {
+		t.Errorf("Vary must include Precognition, got %v", varyVals)
+	}
+	if !containsStr(varyVals, "X-Inertia") {
+		t.Errorf("Vary must include X-Inertia, got %v", varyVals)
 	}
 
 	plain := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -326,9 +328,22 @@ func TestMiddleware_ParsesPrecognition(t *testing.T) {
 	if seen.IsPrecognition {
 		t.Error("absent Precognition header must leave IsPrecognition false")
 	}
-	if strings.Contains(rec2.Header().Get("Vary"), "Precognition") {
-		t.Errorf("non-precognition response must not Vary: Precognition, got %q", rec2.Header().Get("Vary"))
+	plainVary := rec2.Header().Values("Vary")
+	if containsStr(plainVary, "Precognition") {
+		t.Errorf("non-precognition response must not Vary: Precognition, got %v", plainVary)
 	}
+	if !containsStr(plainVary, "X-Inertia") {
+		t.Errorf("non-precognition response must still Vary: X-Inertia, got %v", plainVary)
+	}
+}
+
+func containsStr(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 func equalStrings(a, b []string) bool {

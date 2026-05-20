@@ -90,10 +90,9 @@ func (i *Inertia) Middleware(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, ctxKeySessionErrors, sessErrors)
 		ctx = context.WithValue(ctx, ctxKeySessionFlash, sessFlash)
 
+		w.Header().Add("Vary", "X-Inertia")
 		if info.IsPrecognition {
-			w.Header().Set("Vary", "X-Inertia, Precognition")
-		} else {
-			w.Header().Add("Vary", "X-Inertia")
+			w.Header().Add("Vary", "Precognition")
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
