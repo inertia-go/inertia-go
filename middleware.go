@@ -33,7 +33,18 @@ const (
 // errors and messages) and setting Vary: X-Inertia on the response.
 func (i *Inertia) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer i.flushSession(w)
+		// Wrap w so the session accumulator is drained immediately before
+		// the response headers are committed (the first WriteHeader/Write),
+		// not after the handler returns — by then net/http has already sent
+		// the headers and any Set-Cookie from the flush would be lost.
+		fw := &flushWriter{ResponseWriter: w}
+		fw.flush = func() { i.flushSession(fw) }
+		w = fw
+		// Fallback: a handler that writes nothing never trips the wrapper,
+		// so flush once more here. sync.Once makes this a no-op if the
+		// response was already written.
+		defer fw.flushNow()
+
 		info := parseRequestInfo(r)
 
 		// Pull errors and messages from the session (read-and-clear).

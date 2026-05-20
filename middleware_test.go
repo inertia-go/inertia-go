@@ -1,9 +1,12 @@
 package inertia
 
 import (
+	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/inertia-go/inertia-go/session"
 )
 
 func TestMiddleware_ParsesInertiaHeaders(t *testing.T) {
@@ -119,6 +122,75 @@ func TestMiddleware_NoFlushWhenStoreLacksInterface(t *testing.T) {
 	h := i.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+}
+
+// TestMiddleware_CookieFlushSurvivesRealHTTP exercises the flush timing
+// against a real net/http server (not httptest.ResponseRecorder, which
+// never freezes its header map). A handler that flashes errors and then
+// redirects must still emit Set-Cookie: with a deferred flush the header
+// is already on the wire by the time FlushResponse runs, so the cookie
+// is silently dropped.
+func TestMiddleware_CookieFlushSurvivesRealHTTP(t *testing.T) {
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.NewCookie(session.CookieOptions{Keys: [][]byte{key[:]}})
+	if err != nil {
+		t.Fatalf("NewCookie: %v", err)
+	}
+	i, err := New(Config{Session: store})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ValidationErrors(r).Add("email", "required")
+		i.Redirect(w, r, "/login")
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	// Do not follow the redirect; inspect the 30x response itself.
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(srv.URL + "/submit")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if len(resp.Cookies()) == 0 {
+		t.Fatalf("no Set-Cookie on redirect response; flash was dropped (status %d)", resp.StatusCode)
+	}
+}
+
+// TestMiddleware_ResponseControllerReachesUnderlying confirms the flushWriter
+// wrapper does not hide optional capabilities: http.NewResponseController must
+// follow Unwrap to the real writer so SSE/streaming handlers can still Flush.
+func TestMiddleware_ResponseControllerReachesUnderlying(t *testing.T) {
+	i := newTestInertia(t)
+	var flushErr error
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: hi\n\n"))
+		flushErr = http.NewResponseController(w).Flush()
+	}))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/stream")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if flushErr != nil {
+		t.Errorf("ResponseController.Flush did not reach underlying writer: %v", flushErr)
+	}
 }
 
 func equalStrings(a, b []string) bool {
