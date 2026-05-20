@@ -72,7 +72,8 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - `(*Inertia).Render(w, r, component, props)`
 - `(*Inertia).Redirect(w, r, url)` / `Location` / `Back`
 - `(*Inertia).Share(key, fn)` / `ShareValue(key, value)`
-- Prop wrappers: `inertia.Always`, `Optional`, `Defer`, `Merge`, `DeepMerge`, `Prepend`, `MatchOn`
+- Prop wrappers: `inertia.Always`, `Optional`, `Defer` (`.Rescue()`), `Merge`, `DeepMerge`, `Prepend`, `MatchOn`, `Once` (`.ExpiresIn()`), `Scroll`
+- Page meta: `Config.PreserveFragment`, `inertia.SetPreserveFragment(r, bool)`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
 - Vite: `vite.Load`, `vite.MustLoad`, `vite.Dev` (satisfies `inertia.ViteHelper`)
@@ -98,7 +99,10 @@ without backward compatibility for v1 or v2.
 | `prependProps` (v3 prepend) | ✅ |
 | `matchPropsOn` (v3 list reconciliation) | ✅ |
 | `sharedProps` (v3 shared-keys metadata) | ✅ |
-| `scrollProps` / `onceProps` / `rescuedProps` | Reserved (always empty in v0.4; landing in v0.5) |
+| `scrollProps` (v3 infinite scroll) | ✅ |
+| `onceProps` (v3 once props) | ✅ |
+| `rescuedProps` (v3 deferred rescue) | ✅ |
+| `preserveFragment` page meta | ✅ |
 | SSR HTTP client | ✅ |
 | Vite manifest helper | ✅ |
 | Precognition | Out of scope |
