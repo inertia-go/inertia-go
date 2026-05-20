@@ -68,3 +68,26 @@ func TestFilterKeys_PartialReload_ComponentMismatch_FallsBackToFull(t *testing.T
 		t.Errorf("got %v", keep)
 	}
 }
+
+func TestFilterKeys_PartialReload_ExceptOnly_ReturnsAllEagerMinus(t *testing.T) {
+	props := Props{
+		"a":     "x",
+		"b":     "y",
+		"stats": Merge([]int{1}),
+		"opt":   Optional(func() (any, error) { return 1, nil }),
+		"def":   Defer(func() (any, error) { return 1, nil }),
+		"auth":  Always("u"),
+	}
+	// Partial request with only X-Inertia-Partial-Except: stats.
+	// partialData empty; partialExcept=["stats"]. Expected: eager props
+	// (a, b, stats) ∪ alwaysIncluded (auth), MINUS stats = {a, b, auth}.
+	// Lazy props (opt, def) are excluded because they are not eager.
+	keep := filterKeys(props,
+		"Dashboard", "Dashboard",
+		nil, []string{"stats"})
+	sort.Strings(keep)
+	want := []string{"a", "auth", "b"}
+	if !reflect.DeepEqual(keep, want) {
+		t.Errorf("got %v, want %v", keep, want)
+	}
+}
