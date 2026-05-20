@@ -13,6 +13,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ValidationErrors(r)` are empty, or `422` with a `{errors: {...}}` JSON
   body otherwise, returning `true` so the handler returns. Reads the same
   error bag the normal redirect-flash path uses; nothing is flashed.
+- `(*Inertia).HandlePrecognition(w, r, validate)` — an optional wrapper over
+  `Precognition` that runs a `validate func(*http.Request)` (which records
+  errors via `ValidationErrors(r).Add`) then delegates, removing the
+  validate-then-check boilerplate. `validate` runs on every request, so its
+  errors remain available for the redirect-flash path on non-precognitive
+  requests.
 - `RequestInfo.IsPrecognition` and `RequestInfo.ValidateOnly` parsed from
   the `Precognition` and `Precognition-Validate-Only` request headers.
 - `Vary: Precognition` emitted on precognitive requests.

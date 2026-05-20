@@ -78,6 +78,7 @@ Each example is a standalone Go module; `cd` into one and run `go run .`.
 - Page meta: `Config.PreserveFragment`, `inertia.SetPreserveFragment(r, bool)`
 - Helpers: `inertia.ValidationErrors(r)`, `inertia.Flash(r)`, `inertia.FromRequest(r)`
 - Precognition: `(*Inertia).Precognition(w, r) bool` — on a `Precognition: true` request, writes `204 + Precognition-Success` when `ValidationErrors(r)` is empty (filtered by `Precognition-Validate-Only`), or `422 {errors:{...}}` otherwise; returns `true` so the handler returns. Call it after your own validation. Exposed via `FromRequest(r).IsPrecognition` / `.ValidateOnly`
+- Precognition (sugar): `(*Inertia).HandlePrecognition(w, r, validate func(*http.Request)) bool` — runs `validate` (which records errors via `ValidationErrors(r).Add`) then delegates to `Precognition`. Removes the validate-then-check boilerplate: `if i.HandlePrecognition(w, r, validate) { return }`. `validate` runs on every request, so on a non-precognitive request its errors stay in the bag for the normal redirect-flash path
 - Sessions: `session.NewCookie`, `session.NewMemory`, `session.NewNoop`
 - Vite: `vite.Load`, `vite.MustLoad`, `vite.Dev` (satisfies `inertia.ViteHelper`)
 - SSR: `ssr.NewHTTP` (satisfies `inertia.SSRClient`)

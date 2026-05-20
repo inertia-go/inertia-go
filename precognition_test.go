@@ -197,3 +197,87 @@ func TestPrecognition_CustomErrorsPropKey(t *testing.T) {
 		t.Errorf("422 body = %v, want validationErrors.name=required", body)
 	}
 }
+
+func TestHandlePrecognition_RunsValidateAnd422(t *testing.T) {
+	i := newTestInertia(t)
+	calls := 0
+	validate := func(r *http.Request) {
+		calls++
+		ValidationErrors(r).Add("name", "required")
+	}
+	var handled bool
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handled = i.HandlePrecognition(w, r, validate)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/submit", nil)
+	req.Header.Set("Precognition", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if calls != 1 {
+		t.Errorf("validate called %d times, want 1", calls)
+	}
+	if !handled {
+		t.Error("HandlePrecognition must return true on a precognitive request")
+	}
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+	var body map[string]map[string]string
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["errors"]["name"] != "required" {
+		t.Errorf("body = %v, want errors.name=required", body)
+	}
+}
+
+func TestHandlePrecognition_CleanValidate204(t *testing.T) {
+	i := newTestInertia(t)
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.HandlePrecognition(w, r, func(_ *http.Request) {}) // no errors added
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/submit", nil)
+	req.Header.Set("Precognition", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want 204", rec.Code)
+	}
+	if rec.Header().Get("Precognition-Success") != "true" {
+		t.Error("missing Precognition-Success")
+	}
+}
+
+func TestHandlePrecognition_NonPrecogRunsValidateButPassesThrough(t *testing.T) {
+	i := newTestInertia(t)
+	calls := 0
+	var handled bool
+	var bagAfter map[string]string
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handled = i.HandlePrecognition(w, r, func(r *http.Request) {
+			calls++
+			ValidationErrors(r).Add("name", "required")
+		})
+		// Non-precog: validate ran and filled the bag, so the handler can
+		// inspect it for the normal redirect-flash path.
+		if eb, ok := r.Context().Value(ctxKeyErrorBag).(*ErrorBagCollector); ok {
+			bagAfter = eb.snapshot("")
+		}
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil) // no Precognition header
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if calls != 1 {
+		t.Errorf("validate called %d times, want 1 (must run even on non-precog)", calls)
+	}
+	if handled {
+		t.Error("HandlePrecognition must return false on a non-precognitive request")
+	}
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("status = %d, want 418 — handler must keep control on non-precog", rec.Code)
+	}
+	if bagAfter["name"] != "required" {
+		t.Errorf("validate's errors must remain in the bag for the handler: %v", bagAfter)
+	}
+}
