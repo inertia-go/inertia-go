@@ -28,12 +28,28 @@ type PageObject struct {
 	MatchPropsOn []string `json:"matchPropsOn,omitempty"`
 	SharedProps  []string `json:"sharedProps,omitempty"`
 
-	// Reserved for v0.5: declared on the struct so a future minor release
-	// adding wrappers does not change the public JSON shape. v0.4 code
-	// paths never write to them.
-	ScrollProps  map[string]map[string]any `json:"scrollProps,omitempty"`
-	OnceProps    map[string]map[string]any `json:"onceProps,omitempty"`
-	RescuedProps []string                  `json:"rescuedProps,omitempty"`
+	// v0.5 — Inertia v3 page-object features.
+	ScrollProps      map[string]ScrollConfig `json:"scrollProps,omitempty"`
+	OnceProps        map[string]OnceConfig   `json:"onceProps,omitempty"`
+	RescuedProps     []string                `json:"rescuedProps,omitempty"`
+	PreserveFragment bool                    `json:"preserveFragment,omitempty"`
+}
+
+// ScrollConfig is the per-key infinite-scroll metadata emitted under
+// PageObject.scrollProps. Pointers are nil when there is no adjacent page.
+type ScrollConfig struct {
+	PageName     string `json:"pageName"`
+	PreviousPage *int   `json:"previousPage"`
+	NextPage     *int   `json:"nextPage"`
+	CurrentPage  int    `json:"currentPage"`
+}
+
+// OnceConfig is the per-key once-prop metadata emitted under
+// PageObject.onceProps. ExpiresAt is a Unix-millisecond timestamp, or nil
+// for "never expires".
+type OnceConfig struct {
+	Prop      string `json:"prop"`
+	ExpiresAt *int64 `json:"expiresAt"`
 }
 
 // Render writes an Inertia response for the given component and props.

@@ -217,6 +217,39 @@ func TestProtocol_PageObject_HasV3Fields(t *testing.T) {
 	}
 }
 
+func TestProtocol_PageObject_V5Types(t *testing.T) {
+	var p PageObject
+	// Corrected typed maps (were map[string]map[string]any in v0.4).
+	p.ScrollProps = map[string]ScrollConfig{"posts": {PageName: "page", CurrentPage: 1}}
+	p.OnceProps = map[string]OnceConfig{"plans": {Prop: "plans"}}
+	p.RescuedProps = []string{"activity"}
+	p.PreserveFragment = true
+
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(b)
+	for _, want := range []string{
+		`"scrollProps":{"posts":{"pageName":"page","previousPage":null,"nextPage":null,"currentPage":1}}`,
+		`"onceProps":{"plans":{"prop":"plans","expiresAt":null}}`,
+		`"rescuedProps":["activity"]`,
+		`"preserveFragment":true`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("missing %s in %s", want, js)
+		}
+	}
+
+	// Zero-value page must emit none of them (omitempty).
+	z, _ := json.Marshal(PageObject{})
+	for _, tag := range []string{"scrollProps", "onceProps", "rescuedProps", "preserveFragment"} {
+		if strings.Contains(string(z), tag) {
+			t.Errorf("zero-value PageObject must omit %q: %s", tag, z)
+		}
+	}
+}
+
 func TestProtocol_SharedPropsListed(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	i.ShareValue("appName", "Acme")
