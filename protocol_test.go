@@ -447,7 +447,7 @@ func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next := 2
 		i.Render(w, r, "Posts/Index", Props{
-			"posts": Scroll([]map[string]any{{"id": 1}}, ScrollConfig{CurrentPage: 1, NextPage: &next}),
+			"posts": Scroll(ScrollConfig{CurrentPage: 1, NextPage: &next}, func() any { return []map[string]any{{"id": 1}} }),
 		})
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/posts?page=1", nil)

@@ -220,9 +220,9 @@ type propMarkers struct {
 // (requested). Per the v3 protocol, an explicit X-Inertia-Partial-Data
 // request forces the server to re-resolve a once prop even if cached.
 func (m *propMarkers) collect(key string, v any, exceptOnce, requested map[string]bool) (rescue, skip, scroll bool) {
-	if sc := scrollConfigOf(v); sc != nil {
-		m.scrollProps[key] = *sc
-		m.mergeKeys = append(m.mergeKeys, key+".data")
+	if sp, ok := v.(*scrollProp); ok {
+		m.scrollProps[key] = sp.scrollConfig()
+		m.mergeKeys = append(m.mergeKeys, joinPath(key, sp.wrapper))
 		return false, false, true
 	}
 	b, ok := asBuilder(v)
@@ -337,7 +337,9 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 				return
 			}
 			if isScroll {
-				val = map[string]any{"data": val}
+				if sp, ok := raw.(*scrollProp); ok {
+					val = map[string]any{sp.wrapper: val}
+				}
 			}
 			out[key] = val
 		}(k, v, rescue, scroll)
@@ -379,8 +381,8 @@ func evaluateOne(v any) (any, error) {
 	if b, ok := asBuilder(v); ok {
 		return b.resolve()
 	}
-	if sc, ok := v.(scrollWrap); ok {
-		return sc.data, nil
+	if sp, ok := v.(*scrollProp); ok {
+		return sp.dataFn(), nil
 	}
 	return v, nil
 }

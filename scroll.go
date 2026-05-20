@@ -135,3 +135,50 @@ func asIntPtr(v any) *int {
 		return nil
 	}
 }
+
+// scrollProp is the prop type produced by Scroll. metadata is resolved
+// through the adapter registry at render time; dataFn is evaluated lazily
+// only if the prop survives partial-reload filtering. wrapper is the
+// nesting key for the data (default "data"); pageName overrides the
+// adapter-derived page query-param name.
+type scrollProp struct {
+	metadata any
+	dataFn   func() any
+	wrapper  string
+	pageName string
+}
+
+// Scroll wraps a page of infinite-scroll data. metadata is resolved via the
+// ScrollAdapter registry into a ScrollConfig; data is a lazy callback run
+// only when the prop is included. The resolved data nests at
+// props.<key>.<wrapper> (wrapper default "data"), <key>.<wrapper> is listed
+// in mergeProps, and the derived config is emitted under scrollProps.<key>.
+func Scroll(metadata any, data func() any, opts ...ScrollOption) *scrollProp {
+	sp := &scrollProp{metadata: metadata, dataFn: data, wrapper: "data"}
+	for _, o := range opts {
+		o(sp)
+	}
+	return sp
+}
+
+// ScrollOption configures a Scroll call.
+type ScrollOption func(*scrollProp)
+
+// WithPageName overrides the page query-param name. Multiple scroll
+// containers on one page need distinct names to avoid URL conflicts.
+func WithPageName(name string) ScrollOption {
+	return func(sp *scrollProp) { sp.pageName = name }
+}
+
+// WithWrapper sets the nesting key for the data (default "data"). Only
+// props.<key>.<wrapper> is merged; sibling keys in the same object are
+// preserved across infinite-scroll page loads.
+func WithWrapper(key string) ScrollOption {
+	return func(sp *scrollProp) { sp.wrapper = key }
+}
+
+// scrollConfig resolves the prop's metadata through the registry, applying
+// the per-prop pageName override.
+func (sp *scrollProp) scrollConfig() ScrollConfig {
+	return deriveScroll(sp.metadata, ScrollOptions{PageName: sp.pageName})
+}

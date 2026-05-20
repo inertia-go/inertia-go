@@ -123,3 +123,36 @@ func TestDeriveScroll_NoMatchPanics(t *testing.T) {
 	}()
 	deriveScroll(42, ScrollOptions{})
 }
+
+func TestScroll_DefaultsWrapperAndLazy(t *testing.T) {
+	t.Cleanup(resetScrollAdapters)
+	called := false
+	sp := Scroll(map[string]any{"currentPage": 1}, func() any {
+		called = true
+		return []int{1, 2, 3}
+	})
+	if sp.wrapper != "data" {
+		t.Errorf("default wrapper = %q, want data", sp.wrapper)
+	}
+	if called {
+		t.Error("Scroll must not invoke dataFn eagerly")
+	}
+	if got := sp.dataFn(); got == nil {
+		t.Error("dataFn returned nil")
+	}
+	if !called {
+		t.Error("dataFn should run when invoked")
+	}
+}
+
+func TestScroll_WithWrapperAndPageName(t *testing.T) {
+	t.Cleanup(resetScrollAdapters)
+	sp := Scroll(map[string]any{}, func() any { return nil },
+		WithWrapper("items"), WithPageName("orders"))
+	if sp.wrapper != "items" {
+		t.Errorf("wrapper = %q, want items", sp.wrapper)
+	}
+	if sp.pageName != "orders" {
+		t.Errorf("pageName = %q, want orders", sp.pageName)
+	}
+}
