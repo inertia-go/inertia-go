@@ -3,6 +3,41 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] — 2026-05-20
+
+### BREAKING
+
+- **HTML output shape**: initial HTML now emits
+  `<script data-page="app" type="application/json">…</script><div id="app"></div>`
+  per Inertia v3 protocol. v2 clients will no longer boot. Templates
+  using `{{ .InertiaBody }}` need no change.
+- **CookieStore requires `inertia.Middleware`** to flush flash/error
+  payloads. Without the middleware, flashes are silently dropped.
+- **propWrapper interface** gained two methods (`isPrepend`,
+  `matchOnKeys`). Internal interface; user code unaffected unless
+  asserting concrete wrapper types (unsupported).
+
+### Added
+
+- New prop wrappers: `Prepend(v)`, `MatchOn(v, keys...)`.
+- `PageObject` fields: `prependProps`, `matchPropsOn`, `sharedProps`,
+  plus reserved-for-v0.5 `scrollProps`, `onceProps`, `rescuedProps`
+  (always empty in v0.4).
+- `sharedProps` auto-derived from `Share` / `ShareValue` registrations.
+- `SessionFlusher` interface — session stores implementing it receive a
+  per-request flush hook via `inertia.Middleware`.
+
+### Fixed
+
+- Initial HTML response now includes `deferredProps` metadata so v3
+  clients automatically issue follow-up partial reloads.
+- `X-Inertia-Partial-Except` without `X-Inertia-Partial-Data` now
+  returns all eager props minus the excluded set (previously dropped
+  most props).
+- `CookieStore` no longer overwrites prior flashes when multiple
+  `FlashErrors`/`FlashMessage` calls occur in the same response —
+  payload accumulates and emits a single `Set-Cookie`.
+
 ## [0.3.1] — 2026-05-19
 
 ### Fixed
