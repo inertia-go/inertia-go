@@ -487,6 +487,48 @@ func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
 	}
 }
 
+// TestProtocol_ScrollPrependMergeIntent verifies that the
+// X-Inertia-Infinite-Scroll-Merge-Intent header switches a Scroll prop
+// between appending (mergeProps) and prepending (prependProps), matching the
+// official ScrollProp::configureMergeIntent(). With intent "prepend",
+// <key>.<wrapper> goes to prependProps and must NOT appear in mergeProps.
+func TestProtocol_ScrollPrependMergeIntent(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Chat", Props{
+			"messages": Scroll(ScrollConfig{CurrentPage: 2}, func() any { return []int{1} }),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/chat", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Infinite-Scroll-Merge-Intent", "prepend")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	inPrepend := false
+	for _, p := range page.PrependProps {
+		if p == "messages.data" {
+			inPrepend = true
+		}
+	}
+	if !inPrepend {
+		t.Errorf("prepend intent must put messages.data in prependProps: %v", page.PrependProps)
+	}
+	for _, m := range page.MergeProps {
+		if m == "messages.data" {
+			t.Errorf("prepend intent must NOT put messages.data in mergeProps: %v", page.MergeProps)
+		}
+	}
+	// scrollProps metadata is still emitted regardless of merge direction.
+	if page.ScrollProps["messages"].CurrentPage != 2 {
+		t.Errorf("scrollProps[messages] = %+v", page.ScrollProps["messages"])
+	}
+}
+
 // TestProtocol_ScrollWrapperAndAdapterRoundTrip complements
 // TestProtocol_ScrollProps_WireFormat (which covers the default "data"
 // wrapper + identity adapter) by exercising a CUSTOM paginator adapter and a

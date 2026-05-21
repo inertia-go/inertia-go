@@ -207,6 +207,10 @@ type propMarkers struct {
 	matchOn     []string
 	onceProps   map[string]OnceConfig
 	scrollProps map[string]ScrollConfig
+	// scrollPrepend is set when the client's
+	// X-Inertia-Infinite-Scroll-Merge-Intent header is "prepend", switching
+	// Scroll props from appending (mergeProps) to prepending (prependProps).
+	scrollPrepend bool
 }
 
 // collect classifies a single wrapped prop, appending its key to the
@@ -222,7 +226,14 @@ type propMarkers struct {
 func (m *propMarkers) collect(key string, v any, exceptOnce, requested map[string]bool) (rescue, skip, scroll bool) {
 	if sp, ok := v.(*scrollProp); ok {
 		m.scrollProps[key] = sp.scrollConfig()
-		m.mergeKeys = append(m.mergeKeys, joinPath(key, sp.wrapper))
+		// Append (default) lists the wrapped path in mergeProps; prepend
+		// intent lists it in prependProps instead, per the merge-intent header.
+		target := joinPath(key, sp.wrapper)
+		if m.scrollPrepend {
+			m.prependKeys = append(m.prependKeys, target)
+		} else {
+			m.mergeKeys = append(m.mergeKeys, target)
+		}
 		return false, false, true
 	}
 	b, ok := asBuilder(v)
@@ -320,7 +331,11 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		}
 	}
 
-	markers := &propMarkers{onceProps: map[string]OnceConfig{}, scrollProps: map[string]ScrollConfig{}}
+	markers := &propMarkers{
+		onceProps:     map[string]OnceConfig{},
+		scrollProps:   map[string]ScrollConfig{},
+		scrollPrepend: info.ScrollMergeIntent == "prepend",
+	}
 	for _, k := range keep {
 		v, ok := all[k]
 		if !ok {

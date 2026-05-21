@@ -11,6 +11,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`/page#section`) on a `Purpose: prefetch` request now falls through to a
   normal redirect instead of returning `409 + X-Inertia-Redirect`, matching
   the official middleware which excludes prefetch from fragment handling.
+- Infinite-scroll merge intent now takes effect. With
+  `X-Inertia-Infinite-Scroll-Merge-Intent: prepend`, a `Scroll` prop lists
+  its `<key>.<wrapper>` path in `prependProps` instead of `mergeProps`
+  (append remains the default), matching `ScrollProp::configureMergeIntent()`.
+  The header was previously parsed but ignored.
 
 ## [0.8.0] — 2026-05-20
 
