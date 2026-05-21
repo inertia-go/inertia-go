@@ -25,3 +25,45 @@ func leadsToPath(set []string, path string) bool {
 	}
 	return false
 }
+
+// unpackDotProps rewrites top-level keys containing a dot into nested maps,
+// mutating props in place. "auth.user" => props["auth"]["user"]. An existing
+// nested map at the parent path is preserved and extended; a non-map value at
+// the parent path is left alone (the flat key stays, to avoid clobbering).
+// Only top-level keys are unpacked (matching the official resolver).
+func unpackDotProps(props Props) {
+	var dotted []string
+	for key := range props {
+		if strings.Contains(key, ".") {
+			dotted = append(dotted, key)
+		}
+	}
+	for _, key := range dotted {
+		if setNestedPath(props, strings.Split(key, "."), props[key]) {
+			delete(props, key)
+		}
+	}
+}
+
+// setNestedPath walks/creates nested maps for segments[:len-1] and sets the
+// final segment to val. Returns false if an intermediate segment holds a
+// non-map value (cannot descend), leaving props unchanged for that key.
+func setNestedPath(root map[string]any, segments []string, val any) bool {
+	cur := root
+	for _, seg := range segments[:len(segments)-1] {
+		next, ok := cur[seg]
+		if !ok {
+			m := map[string]any{}
+			cur[seg] = m
+			cur = m
+			continue
+		}
+		m, ok := next.(map[string]any)
+		if !ok {
+			return false
+		}
+		cur = m
+	}
+	cur[segments[len(segments)-1]] = val
+	return true
+}

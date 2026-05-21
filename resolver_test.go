@@ -26,3 +26,38 @@ func TestMatchers(t *testing.T) {
 		})
 	}
 }
+
+func TestUnpackDotProps(t *testing.T) {
+	props := Props{
+		"auth.user":  "alice",
+		"auth.token": "xyz",
+		"plain":      1,
+	}
+	unpackDotProps(props)
+
+	if _, ok := props["auth.user"]; ok {
+		t.Error("flat dot key auth.user must be removed")
+	}
+	auth, ok := props["auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("auth must be a nested map, got %T", props["auth"])
+	}
+	if auth["user"] != "alice" || auth["token"] != "xyz" {
+		t.Errorf("auth = %v, want {user:alice, token:xyz}", auth)
+	}
+	if props["plain"] != 1 {
+		t.Errorf("plain key must be untouched: %v", props["plain"])
+	}
+}
+
+func TestUnpackDotProps_MergesIntoExistingMap(t *testing.T) {
+	props := Props{
+		"auth":      map[string]any{"id": 7},
+		"auth.user": "alice",
+	}
+	unpackDotProps(props)
+	auth := props["auth"].(map[string]any)
+	if auth["id"] != 7 || auth["user"] != "alice" {
+		t.Errorf("auth = %v, want {id:7, user:alice}", auth)
+	}
+}
