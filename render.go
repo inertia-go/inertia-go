@@ -218,8 +218,8 @@ func (i *Inertia) mergeAllProps(r *http.Request, user Props) Props {
 
 // propMarkers accumulates the per-prop key lists that populate the
 // PageObject (mergeProps, deepMergeProps, prependProps, matchPropsOn,
-// onceProps, scrollProps). Collected synchronously in the keep-loop before
-// evaluation fans out.
+// onceProps, scrollProps). Collected during recursive resolution by
+// collectMetadata.
 type propMarkers struct {
 	mergeKeys   []string
 	deepKeys    []string

@@ -785,3 +785,33 @@ func TestProtocol_PrecognitionEndToEnd(t *testing.T) {
 		t.Error("real action must not run on a failed precognitive request")
 	}
 }
+
+func TestProtocol_ComponentMismatch_FallsBackToFull(t *testing.T) {
+	// A partial-component header that does not match the rendered component is
+	// not a partial reload: the response is full, so an Optional prop is still
+	// excluded from the initial full response, and an eager prop is present.
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Users/Index", Props{
+			"users":    []string{"alice"},
+			"optional": Optional(func() (any, error) { return "lazy", nil }),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/users", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Other/Page") // does NOT match
+	req.Header.Set("X-Inertia-Partial-Data", "optional")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := page.Props["users"]; !ok {
+		t.Errorf("eager prop must be present on full fallback: %v", page.Props)
+	}
+	if _, ok := page.Props["optional"]; ok {
+		t.Errorf("component mismatch is not a partial; Optional must be excluded: %v", page.Props)
+	}
+}

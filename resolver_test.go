@@ -105,7 +105,7 @@ func TestResolve_NestedOptionalOnPartial(t *testing.T) {
 	}
 }
 
-func TestResolve_ParentWasResolvedBypass(t *testing.T) {
+func TestResolve_OptionalNotRequested_Omitted(t *testing.T) {
 	pr := &propsResolver{
 		isPartial: true,
 		only:      []string{"other"},
@@ -117,6 +117,64 @@ func TestResolve_ParentWasResolvedBypass(t *testing.T) {
 	})
 	if _, ok := out["feed"]; ok {
 		t.Errorf("feed not in only; must be omitted: %v", out)
+	}
+}
+
+func TestResolve_ParentWasResolvedBypass(t *testing.T) {
+	// only=["feed.shown"] makes "feed" reachable solely via leadsToPath (it is
+	// an ancestor of the requested leaf), NOT via matchesPath. A closure at
+	// "feed" returns a map, so its children are marked parentWasResolved and
+	// bypass the partial filter: "feed.extra" is included even though it is
+	// neither requested nor a descendant of the selector. This isolates the
+	// bypass — without it, "feed.extra" would be filtered (see the static case).
+	pr := &propsResolver{
+		isPartial: true,
+		only:      []string{"feed.shown"},
+		markers:   newMarkers(),
+	}
+	out, err := pr.resolve(Props{
+		"feed": Optional(func() (any, error) {
+			return map[string]any{"shown": "a", "extra": "b"}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	feed, ok := out["feed"].(map[string]any)
+	if !ok {
+		t.Fatalf("feed must resolve to a nested map: %v", out)
+	}
+	if feed["shown"] != "a" {
+		t.Errorf("requested leaf feed.shown must be included: %v", feed)
+	}
+	if feed["extra"] != "b" {
+		t.Errorf("closure-returned sibling must bypass the partial filter: %v", feed)
+	}
+}
+
+func TestResolve_StaticNestedMap_ChildrenStayFiltered(t *testing.T) {
+	// Same selector as the bypass test, but "feed" is a STATIC map (no closure),
+	// so its children are NOT marked parentWasResolved. "feed.shown" is included
+	// (matchesPath), but "feed.extra" — neither requested nor a descendant of the
+	// selector — stays filtered. The contrast with the closure case is the whole
+	// point of parentWasResolved.
+	pr := &propsResolver{
+		isPartial: true,
+		only:      []string{"feed.shown"},
+		markers:   newMarkers(),
+	}
+	out, _ := pr.resolve(Props{
+		"feed": map[string]any{
+			"shown": "a",
+			"extra": Optional(func() (any, error) { return "b", nil }),
+		},
+	})
+	feed, _ := out["feed"].(map[string]any)
+	if feed["shown"] != "a" {
+		t.Errorf("requested leaf feed.shown must be included: %v", feed)
+	}
+	if _, ok := feed["extra"]; ok {
+		t.Errorf("static-map sibling not requested must stay filtered: %v", feed)
 	}
 }
 
