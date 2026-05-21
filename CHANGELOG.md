@@ -3,6 +3,36 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] — unreleased
+
+### Added
+
+- **Recursive nested props resolver.** Props are now resolved by walking the
+  prop tree instead of only top-level keys, matching the official Laravel
+  `PropsResolver`. Nested maps may contain prop-type wrappers
+  (`Optional`/`Defer`/`Merge`/`DeepMerge`/`Once`/`Scroll`), and partial-reload
+  selectors support dot notation (`X-Inertia-Partial-Data: auth.user`,
+  `X-Inertia-Partial-Except: auth.token`).
+- Top-level dot keys are unpacked into nested maps (`Props{"auth.user": …}` →
+  `props.auth.user`).
+- A closure that returns a nested map marks its children "resolved" so they
+  bypass the partial filter (parentWasResolved), matching the official engine.
+- Nested `Merge`/`Scroll`/`Once`/etc. emit dotted metadata keys
+  (`mergeProps: ["auth.notifications"]`).
+
+### Changed
+
+- Prop evaluation is now **synchronous** (the previous goroutine-concurrent
+  evaluation is removed). Deferred/scroll props are excluded from the initial
+  response anyway, so the eager set is small.
+
+### Note
+
+- Nested maps are now recursed. Props whose values are pure data are
+  unaffected (leaves are returned unchanged); the new behavior only applies to
+  nested prop-type wrappers and dot-notation selectors. The one wire change is
+  that nested wrapper keys use dot paths.
+
 ## [0.9.0] — 2026-05-21
 
 ### Fixed
