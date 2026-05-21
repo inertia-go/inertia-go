@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] — unreleased
+
+### Fixed
+
+- Prefetch fragment redirects are no longer intercepted. A fragment redirect
+  (`/page#section`) on a `Purpose: prefetch` request now falls through to a
+  normal redirect instead of returning `409 + X-Inertia-Redirect`, matching
+  the official middleware which excludes prefetch from fragment handling.
+
 ## [0.8.0] — 2026-05-20
 
 ### Added

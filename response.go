@@ -12,7 +12,12 @@ import (
 // collectors are persisted to the session before the response is written.
 func (i *Inertia) Redirect(w http.ResponseWriter, r *http.Request, url string) {
 	i.persistCollectors(w, r)
-	if strings.Contains(url, "#") && FromRequest(r).IsInertia {
+	info := FromRequest(r)
+	// Fragment redirects are intercepted with 409 + X-Inertia-Redirect so the
+	// client preserves the fragment, EXCEPT on prefetch requests: the official
+	// middleware excludes Purpose: prefetch, letting them fall through to a
+	// normal redirect.
+	if strings.Contains(url, "#") && info.IsInertia && !info.IsPrefetch {
 		w.Header().Set("X-Inertia-Redirect", url)
 		w.WriteHeader(http.StatusConflict)
 		return
