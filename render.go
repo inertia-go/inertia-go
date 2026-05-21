@@ -38,11 +38,16 @@ type PageObject struct {
 
 // ScrollConfig is the per-key infinite-scroll metadata emitted under
 // PageObject.scrollProps. Pointers are nil when there is no adjacent page.
+//
+// Reset is a server-computed output flag: it is set to true by the renderer
+// when the prop's key appears in the X-Inertia-Reset header. Values supplied
+// by callers are overwritten during rendering.
 type ScrollConfig struct {
 	PageName     string `json:"pageName"`
 	PreviousPage *int   `json:"previousPage"`
 	NextPage     *int   `json:"nextPage"`
 	CurrentPage  int    `json:"currentPage"`
+	Reset        bool   `json:"reset"`
 }
 
 // OnceConfig is the per-key once-prop metadata emitted under
@@ -211,6 +216,10 @@ type propMarkers struct {
 	// X-Inertia-Infinite-Scroll-Merge-Intent header is "prepend", switching
 	// Scroll props from appending (mergeProps) to prepending (prependProps).
 	scrollPrepend bool
+	// reset is the set of prop keys from X-Inertia-Reset. A key in this set is
+	// suppressed from merge/prepend/deepMerge metadata, and its scrollProps
+	// entry gets reset=true.
+	reset map[string]bool
 }
 
 // collect classifies a single wrapped prop, appending its key to the
@@ -225,14 +234,21 @@ type propMarkers struct {
 // request forces the server to re-resolve a once prop even if cached.
 func (m *propMarkers) collect(key string, v any, exceptOnce, requested map[string]bool) (rescue, skip, scroll bool) {
 	if sp, ok := v.(*scrollProp); ok {
-		m.scrollProps[key] = sp.scrollConfig()
+		cfg := sp.scrollConfig()
+		// A reset key still emits its scroll metadata, but with reset=true so
+		// the client discards the accumulated pages instead of merging.
+		cfg.Reset = m.reset[key]
+		m.scrollProps[key] = cfg
 		// Append (default) lists the wrapped path in mergeProps; prepend
 		// intent lists it in prependProps instead, per the merge-intent header.
-		target := joinPath(key, sp.wrapper)
-		if m.scrollPrepend {
-			m.prependKeys = append(m.prependKeys, target)
-		} else {
-			m.mergeKeys = append(m.mergeKeys, target)
+		// A reset key is suppressed from the merge metadata entirely.
+		if !m.reset[key] {
+			target := joinPath(key, sp.wrapper)
+			if m.scrollPrepend {
+				m.prependKeys = append(m.prependKeys, target)
+			} else {
+				m.mergeKeys = append(m.mergeKeys, target)
+			}
 		}
 		return false, false, true
 	}
@@ -240,27 +256,33 @@ func (m *propMarkers) collect(key string, v any, exceptOnce, requested map[strin
 	if !ok {
 		return false, false, false
 	}
-	// A nested target (Prepend/Append at a sub-path) merges only that path
-	// and replaces the rest of the object, so the root key must NOT enter
-	// mergeProps. matchOn alone is a list-reconciliation strategy, not a
-	// nested target, so it leaves the root merge in place.
-	nestedTarget := len(b.prependPath) > 0 || len(b.appendPath) > 0
-	if b.merge && !nestedTarget {
-		m.mergeKeys = append(m.mergeKeys, key)
-	}
-	if b.deepMerge {
-		m.deepKeys = append(m.deepKeys, key)
-	}
-	for _, p := range b.prependPath {
-		m.prependKeys = append(m.prependKeys, joinPath(key, p))
-	}
-	for _, p := range b.appendPath {
-		if p != "" {
-			m.mergeKeys = append(m.mergeKeys, joinPath(key, p))
+	// X-Inertia-Reset suppresses all mergeable metadata for this key: the
+	// client wants a fresh value, not a merge with what it has. Mirrors the
+	// official resolver's early return in collectMergeableMetadata. once and
+	// scroll (handled above) are not mergeable and are unaffected.
+	if !m.reset[key] {
+		// A nested target (Prepend/Append at a sub-path) merges only that
+		// path and replaces the rest of the object, so the root key must NOT
+		// enter mergeProps. matchOn alone is a list-reconciliation strategy,
+		// not a nested target, so it leaves the root merge in place.
+		nestedTarget := len(b.prependPath) > 0 || len(b.appendPath) > 0
+		if b.merge && !nestedTarget {
+			m.mergeKeys = append(m.mergeKeys, key)
 		}
-	}
-	for path, field := range b.matchOn {
-		m.matchOn = append(m.matchOn, joinPath(joinPath(key, path), field))
+		if b.deepMerge {
+			m.deepKeys = append(m.deepKeys, key)
+		}
+		for _, p := range b.prependPath {
+			m.prependKeys = append(m.prependKeys, joinPath(key, p))
+		}
+		for _, p := range b.appendPath {
+			if p != "" {
+				m.mergeKeys = append(m.mergeKeys, joinPath(key, p))
+			}
+		}
+		for path, field := range b.matchOn {
+			m.matchOn = append(m.matchOn, joinPath(joinPath(key, path), field))
+		}
 	}
 	if b.once {
 		skip = m.collectOnce(key, b, exceptOnce, requested)
@@ -335,6 +357,7 @@ func (i *Inertia) evaluatePropsFor(r *http.Request, all Props, keep []string, is
 		onceProps:     map[string]OnceConfig{},
 		scrollProps:   map[string]ScrollConfig{},
 		scrollPrepend: info.ScrollMergeIntent == "prepend",
+		reset:         setOf(info.Reset),
 	}
 	for _, k := range keep {
 		v, ok := all[k]

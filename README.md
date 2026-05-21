@@ -93,7 +93,7 @@ without backward compatibility for v1 or v2.
 | `X-Inertia` request/response header | ✅ |
 | `X-Inertia-Version` + 409 mismatch | ✅ |
 | `X-Inertia-Partial-Data` / `-Partial-Component` / `-Partial-Except` | ✅ |
-| `X-Inertia-Reset` | Parsed; exposed via `FromRequest(r).Reset` (client-only directive — no mandatory server behavior) |
+| `X-Inertia-Reset` | ✅ — suppresses listed props from `mergeProps`/`prependProps`/`deepMergeProps` and sets `scrollProps.<key>.reset`; also exposed via `FromRequest(r).Reset` |
 | `Purpose: prefetch` | Parsed; exposed via `FromRequest(r).IsPrefetch` |
 | `X-Inertia-Location` (external redirect) | ✅ |
 | `X-Inertia-Redirect` (fragment redirect) | ✅ |
