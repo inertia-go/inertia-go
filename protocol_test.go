@@ -232,7 +232,7 @@ func TestProtocol_PageObject_V5Types(t *testing.T) {
 	}
 	js := string(b)
 	for _, want := range []string{
-		`"scrollProps":{"posts":{"pageName":"page","previousPage":null,"nextPage":null,"currentPage":1}}`,
+		`"scrollProps":{"posts":{"pageName":"page","previousPage":null,"nextPage":null,"currentPage":1,"reset":false}}`,
 		`"onceProps":{"plans":{"prop":"plans","expiresAt":null}}`,
 		`"rescuedProps":["activity"]`,
 		`"preserveFragment":true`,
@@ -484,6 +484,119 @@ func TestProtocol_ScrollProps_WireFormat(t *testing.T) {
 	sc := page.ScrollProps["posts"]
 	if sc.PageName != "page" || sc.CurrentPage != 1 || sc.NextPage == nil || *sc.NextPage != 2 {
 		t.Errorf("scrollProps[posts] = %+v", sc)
+	}
+}
+
+// TestProtocol_ScrollPrependMergeIntent verifies that the
+// X-Inertia-Infinite-Scroll-Merge-Intent header switches a Scroll prop
+// between appending (mergeProps) and prepending (prependProps), matching the
+// official ScrollProp::configureMergeIntent(). With intent "prepend",
+// <key>.<wrapper> goes to prependProps and must NOT appear in mergeProps.
+func TestProtocol_ScrollPrependMergeIntent(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Chat", Props{
+			"messages": Scroll(ScrollConfig{CurrentPage: 2}, func() any { return []int{1} }),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/chat", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Infinite-Scroll-Merge-Intent", "prepend")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	inPrepend := false
+	for _, p := range page.PrependProps {
+		if p == "messages.data" {
+			inPrepend = true
+		}
+	}
+	if !inPrepend {
+		t.Errorf("prepend intent must put messages.data in prependProps: %v", page.PrependProps)
+	}
+	for _, m := range page.MergeProps {
+		if m == "messages.data" {
+			t.Errorf("prepend intent must NOT put messages.data in mergeProps: %v", page.MergeProps)
+		}
+	}
+	// scrollProps metadata is still emitted regardless of merge direction.
+	if page.ScrollProps["messages"].CurrentPage != 2 {
+		t.Errorf("scrollProps[messages] = %+v", page.ScrollProps["messages"])
+	}
+}
+
+// TestProtocol_ResetSuppressesMerge verifies that a prop listed in
+// X-Inertia-Reset is not collected into mergeProps (the official resolver
+// early-returns before adding merge metadata for a reset path).
+func TestProtocol_ResetSuppressesMerge(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Feed", Props{
+			"items":  Merge([]int{1, 2}),
+			"others": Merge([]int{3}),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/feed", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Reset", "items")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range page.MergeProps {
+		if m == "items" {
+			t.Errorf("reset must suppress 'items' from mergeProps: %v", page.MergeProps)
+		}
+	}
+	// A non-reset merge prop is unaffected.
+	found := false
+	for _, m := range page.MergeProps {
+		if m == "others" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("non-reset merge prop 'others' must remain in mergeProps: %v", page.MergeProps)
+	}
+}
+
+// TestProtocol_ResetScrollFlag verifies that scrollProps.<key>.reset reflects
+// whether the key appears in X-Inertia-Reset (the scroll prop is still
+// collected; only the per-key flag changes).
+func TestProtocol_ResetScrollFlag(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	render := func(reset string) PageObject {
+		h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			i.Render(w, r, "Chat", Props{
+				"messages": Scroll(ScrollConfig{CurrentPage: 1}, func() any { return []int{1} }),
+			})
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/chat", nil)
+		req.Header.Set("X-Inertia", "true")
+		if reset != "" {
+			req.Header.Set("X-Inertia-Reset", reset)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var page PageObject
+		if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		return page
+	}
+
+	if got := render("messages").ScrollProps["messages"].Reset; !got {
+		t.Error("scrollProps[messages].reset must be true when 'messages' is in X-Inertia-Reset")
+	}
+	if got := render("").ScrollProps["messages"].Reset; got {
+		t.Error("scrollProps[messages].reset must be false without X-Inertia-Reset")
 	}
 }
 

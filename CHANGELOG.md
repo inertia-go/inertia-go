@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] — 2026-05-21
+
+### Fixed
+
+- Prefetch fragment redirects are no longer intercepted. A fragment redirect
+  (`/page#section`) on a `Purpose: prefetch` request now falls through to a
+  normal redirect instead of returning `409 + X-Inertia-Redirect`, matching
+  the official middleware which excludes prefetch from fragment handling.
+- Infinite-scroll merge intent now takes effect. With
+  `X-Inertia-Infinite-Scroll-Merge-Intent: prepend`, a `Scroll` prop lists
+  its `<key>.<wrapper>` path in `prependProps` instead of `mergeProps`
+  (append remains the default), matching `ScrollProp::configureMergeIntent()`.
+  The header was previously parsed but ignored.
+- `X-Inertia-Reset` now affects the response metadata (previously parsed but
+  unused). A prop listed in the header is suppressed from
+  `mergeProps` / `prependProps` / `deepMergeProps` (the client gets a fresh
+  value), and its `scrollProps.<key>.reset` flag is set to `true`. This adds
+  a `reset` boolean to every `scrollProps` entry on the wire (always present;
+  `false` when not reset), matching the official resolver.
+
 ## [0.8.0] — 2026-05-20
 
 ### Added

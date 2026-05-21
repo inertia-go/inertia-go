@@ -68,6 +68,32 @@ func TestRedirect_FragmentUses409Redirect(t *testing.T) {
 	}
 }
 
+// TestRedirect_PrefetchFragmentNot409 verifies that a fragment redirect on a
+// prefetch request (Purpose: prefetch) is NOT intercepted with 409 +
+// X-Inertia-Redirect. The official Laravel middleware excludes prefetch from
+// the fragment-redirect handling, so it falls through to a normal redirect.
+func TestRedirect_PrefetchFragmentNot409(t *testing.T) {
+	i := newTestInertia(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Inertia", "true")
+	r.Header.Set("Purpose", "prefetch")
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Redirect(w, r, "/page#section")
+	}))
+	h.ServeHTTP(w, r)
+
+	if w.Code == http.StatusConflict {
+		t.Errorf("prefetch fragment redirect must not return 409; got %d", w.Code)
+	}
+	if got := w.Header().Get("X-Inertia-Redirect"); got != "" {
+		t.Errorf("prefetch fragment redirect must not set X-Inertia-Redirect; got %q", got)
+	}
+	if got := w.Header().Get("Location"); got != "/page#section" {
+		t.Errorf("prefetch fragment redirect must use a normal Location redirect; got %q", got)
+	}
+}
+
 func TestLocation_NonInertia_FallsBackToStandardRedirect(t *testing.T) {
 	i := newTestInertia(t)
 	w := httptest.NewRecorder()
