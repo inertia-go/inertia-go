@@ -815,3 +815,80 @@ func TestProtocol_ComponentMismatch_FallsBackToFull(t *testing.T) {
 		t.Errorf("component mismatch is not a partial; Optional must be excluded: %v", page.Props)
 	}
 }
+
+func TestProtocol_NestedPartialDataSelector(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "App", Props{
+			"auth": map[string]any{
+				"user":  Optional(func() (any, error) { return "alice", nil }),
+				"token": Optional(func() (any, error) { return "xyz", nil }),
+			},
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "App")
+	req.Header.Set("X-Inertia-Partial-Data", "auth.user")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	auth, ok := page.Props["auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("auth must be present: %v", page.Props)
+	}
+	if auth["user"] != "alice" {
+		t.Errorf("auth.user must be included: %v", auth)
+	}
+	if _, ok := auth["token"]; ok {
+		t.Errorf("auth.token must be excluded by the dot selector: %v", auth)
+	}
+}
+
+func TestProtocol_NestedPartialExcept(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "App", Props{
+			"auth": map[string]any{"user": "alice", "token": "xyz"},
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "App")
+	req.Header.Set("X-Inertia-Partial-Except", "auth.token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	_ = json.Unmarshal(rec.Body.Bytes(), &page)
+	auth, _ := page.Props["auth"].(map[string]any)
+	if auth["user"] != "alice" {
+		t.Errorf("auth.user must remain: %v", auth)
+	}
+	if _, ok := auth["token"]; ok {
+		t.Errorf("auth.token must be excluded by nested except: %v", auth)
+	}
+}
+
+func TestProtocol_TopLevelDotKeyUnpacks(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "App", Props{
+			"auth.user": "alice",
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var page PageObject
+	_ = json.Unmarshal(rec.Body.Bytes(), &page)
+	auth, ok := page.Props["auth"].(map[string]any)
+	if !ok || auth["user"] != "alice" {
+		t.Errorf("top-level dot key must unpack to nested auth.user: %v", page.Props)
+	}
+}
