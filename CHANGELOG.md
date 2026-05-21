@@ -30,8 +30,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Nested maps are now recursed. Props whose values are pure data are
   unaffected (leaves are returned unchanged); the new behavior only applies to
-  nested prop-type wrappers and dot-notation selectors. The one wire change is
+  nested prop-type wrappers and dot-notation selectors. The main wire change is
   that nested wrapper keys use dot paths.
+- Partial reloads now follow the official engine: `Optional`/`Defer` props are
+  excluded only from the *initial* response, so a partial reload with only
+  `X-Inertia-Partial-Except` (or no `X-Inertia-Partial-Data` at all) may now
+  surface `Optional` props that the previous flat filter excluded.
 
 ## [0.9.0] — 2026-05-21
 
