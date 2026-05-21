@@ -1,6 +1,10 @@
 package inertia
 
-import "strings"
+import (
+	"sort"
+	"strings"
+	"time"
+)
 
 // matchesPath reports whether path equals or descends from any entry in set.
 // Used for both partial "only" matching and "except" matching: a path matches
@@ -66,4 +70,239 @@ func setNestedPath(root map[string]any, segments []string, val any) bool {
 	}
 	cur[segments[len(segments)-1]] = val
 	return true
+}
+
+func newMarkers() *propMarkers {
+	return &propMarkers{
+		onceProps:   map[string]OnceConfig{},
+		scrollProps: map[string]ScrollConfig{},
+	}
+}
+
+type propsResolver struct {
+	isPartial     bool
+	only          []string // nil when not a partial reload or no Partial-Data
+	except        []string
+	requested     map[string]bool // PartialData as a set (once force-refresh)
+	exceptOnce    map[string]bool
+	scrollPrepend bool
+	reset         map[string]bool
+	markers       *propMarkers
+	rescued       []string
+	deferred      map[string][]string
+}
+
+// resolve unpacks dot keys then resolves the tree from the root.
+func (pr *propsResolver) resolve(props Props) (map[string]any, error) {
+	if pr.markers == nil {
+		pr.markers = newMarkers()
+	}
+	if pr.deferred == nil {
+		pr.deferred = map[string][]string{}
+	}
+	pr.markers.scrollPrepend = pr.scrollPrepend
+	pr.markers.reset = pr.reset
+	unpackDotProps(props)
+	return pr.resolveProps(props, "", false)
+}
+
+func (pr *propsResolver) resolveProps(props map[string]any, prefix string, parentResolved bool) (map[string]any, error) {
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make(map[string]any, len(props))
+	for _, key := range keys {
+		prop := props[key]
+		path := joinPath(prefix, key)
+
+		if !pr.shouldInclude(path, prop, parentResolved) {
+			continue
+		}
+		// A once prop the client already has cached (and didn't explicitly
+		// request, and isn't Fresh) still emits its metadata, but its value is
+		// skipped. Match the v0.9 ordering: metadata first, then skip.
+		if pr.shouldSkipOnce(path, key, prop) {
+			pr.collectMetadata(path, key, prop)
+			continue
+		}
+		if !pr.isPartial && pr.excludeFromInitial(path, prop) {
+			continue
+		}
+
+		val, err := pr.resolveValue(prop)
+		if err != nil {
+			if isRescuable(prop) {
+				pr.rescued = append(pr.rescued, path)
+				continue
+			}
+			return nil, err
+		}
+
+		// Unwrap one level: a closure that returned a prop-type.
+		if isPropType(val) {
+			prop = val
+			if !pr.isPartial && pr.excludeFromInitial(path, prop) {
+				continue
+			}
+			if val, err = pr.resolveValue(prop); err != nil {
+				if isRescuable(prop) {
+					pr.rescued = append(pr.rescued, path)
+					continue
+				}
+				return nil, err
+			}
+		}
+
+		pr.collectMetadata(path, key, prop)
+
+		// Scroll values nest under their wrapper; do not recurse into them.
+		if sp, ok := prop.(*scrollProp); ok {
+			val = map[string]any{sp.wrapper: val}
+		} else if m, ok := val.(map[string]any); ok {
+			child, err := pr.resolveProps(m, path, parentResolved || isClosureProp(prop))
+			if err != nil {
+				return nil, err
+			}
+			val = child
+		}
+		out[key] = val
+	}
+	return out, nil
+}
+
+func (pr *propsResolver) shouldInclude(path string, prop any, parentResolved bool) bool {
+	if !pr.isPartial || alwaysIncluded(prop) || parentResolved {
+		return true
+	}
+	return pr.pathMatches(path)
+}
+
+func (pr *propsResolver) pathMatches(path string) bool {
+	if pr.only != nil && !matchesPath(pr.only, path) && !leadsToPath(pr.only, path) {
+		return false
+	}
+	if pr.except != nil && matchesPath(pr.except, path) {
+		return false
+	}
+	return true
+}
+
+// excludeFromInitial drops Optional and Deferred props from the initial
+// (non-partial) response, collecting deferred-group metadata. Returns true
+// when the prop must be skipped.
+func (pr *propsResolver) excludeFromInitial(path string, prop any) bool {
+	b, ok := asBuilder(prop)
+	if !ok {
+		return false
+	}
+	switch b.kind {
+	case kindOptional:
+		return true
+	case kindDeferred:
+		pr.deferred[b.defGrp] = append(pr.deferred[b.defGrp], path)
+		return true
+	}
+	return false
+}
+
+func (pr *propsResolver) resolveValue(prop any) (any, error) {
+	return evaluateOne(prop)
+}
+
+func isPropType(v any) bool {
+	if _, ok := asBuilder(v); ok {
+		return true
+	}
+	_, ok := v.(*scrollProp)
+	return ok
+}
+
+func isClosureProp(prop any) bool {
+	if b, ok := asBuilder(prop); ok {
+		return b.fn != nil
+	}
+	if _, ok := prop.(*scrollProp); ok {
+		return true
+	}
+	return false
+}
+
+func isRescuable(prop any) bool {
+	b, ok := asBuilder(prop)
+	return ok && b.rescue
+}
+
+// collectMetadata classifies a prop and appends its key (the full dot path) to
+// the relevant marker lists. Preserves the v0.9 behavior exactly: reset
+// suppression, scroll merge-intent + reset flag, nested-target handling, once
+// alias/TTL. Moved from the old propMarkers.collect, re-keyed on dot path.
+func (pr *propsResolver) collectMetadata(path, key string, prop any) {
+	if sp, ok := prop.(*scrollProp); ok {
+		cfg := sp.scrollConfig()
+		cfg.Reset = pr.reset[path]
+		pr.markers.scrollProps[path] = cfg
+		if !pr.reset[path] {
+			target := joinPath(path, sp.wrapper)
+			if pr.scrollPrepend {
+				pr.markers.prependKeys = append(pr.markers.prependKeys, target)
+			} else {
+				pr.markers.mergeKeys = append(pr.markers.mergeKeys, target)
+			}
+		}
+		return
+	}
+	b, ok := asBuilder(prop)
+	if !ok {
+		return
+	}
+	if !pr.reset[path] {
+		nested := len(b.prependPath) > 0 || len(b.appendPath) > 0
+		if b.merge && !nested {
+			pr.markers.mergeKeys = append(pr.markers.mergeKeys, path)
+		}
+		if b.deepMerge {
+			pr.markers.deepKeys = append(pr.markers.deepKeys, path)
+		}
+		for _, p := range b.prependPath {
+			pr.markers.prependKeys = append(pr.markers.prependKeys, joinPath(path, p))
+		}
+		for _, p := range b.appendPath {
+			if p != "" {
+				pr.markers.mergeKeys = append(pr.markers.mergeKeys, joinPath(path, p))
+			}
+		}
+		for sub, field := range b.matchOn {
+			pr.markers.matchOn = append(pr.markers.matchOn, joinPath(joinPath(path, sub), field))
+		}
+	}
+	if b.once {
+		onceKey := path
+		if b.onceKey != "" {
+			onceKey = b.onceKey
+		}
+		var exp *int64
+		if b.onceTTL > 0 {
+			ms := time.Now().Add(b.onceTTL).UnixMilli()
+			exp = &ms
+		}
+		pr.markers.onceProps[onceKey] = OnceConfig{Prop: path, ExpiresAt: exp}
+	}
+}
+
+// shouldSkipOnce reports whether a once prop is client-cached and must be
+// skipped (value not resolved/included). Mirrors v0.9: skip only when reported
+// in exceptOnce (by alias) AND not explicitly requested AND not Fresh.
+func (pr *propsResolver) shouldSkipOnce(path, key string, prop any) bool {
+	b, ok := asBuilder(prop)
+	if !ok || !b.once {
+		return false
+	}
+	onceKey := path
+	if b.onceKey != "" {
+		onceKey = b.onceKey
+	}
+	return pr.exceptOnce[onceKey] && !pr.requested[key] && !b.onceFresh
 }

@@ -61,3 +61,80 @@ func TestUnpackDotProps_MergesIntoExistingMap(t *testing.T) {
 		t.Errorf("auth = %v, want {id:7, user:alice}", auth)
 	}
 }
+
+func TestResolve_PlainNestedPreserved(t *testing.T) {
+	pr := &propsResolver{markers: newMarkers()}
+	out, err := pr.resolve(Props{
+		"auth": map[string]any{"user": "alice", "roles": []string{"admin"}},
+		"n":    42,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := out["auth"].(map[string]any)
+	if auth["user"] != "alice" {
+		t.Errorf("nested leaf preserved: %v", auth)
+	}
+	if out["n"] != 42 {
+		t.Errorf("scalar preserved: %v", out["n"])
+	}
+}
+
+func TestResolve_NestedOptionalOnPartial(t *testing.T) {
+	mk := func(only []string) map[string]any {
+		pr := &propsResolver{
+			isPartial: true,
+			only:      only,
+			markers:   newMarkers(),
+		}
+		out, _ := pr.resolve(Props{
+			"auth": map[string]any{
+				"user":  Optional(func() (any, error) { return "alice", nil }),
+				"token": Optional(func() (any, error) { return "xyz", nil }),
+			},
+		})
+		return out
+	}
+	out := mk([]string{"auth.user"})
+	auth, _ := out["auth"].(map[string]any)
+	if auth == nil || auth["user"] != "alice" {
+		t.Errorf("auth.user must be included: %v", out)
+	}
+	if _, ok := auth["token"]; ok {
+		t.Errorf("auth.token must be omitted: %v", auth)
+	}
+}
+
+func TestResolve_ParentWasResolvedBypass(t *testing.T) {
+	pr := &propsResolver{
+		isPartial: true,
+		only:      []string{"other"},
+		markers:   newMarkers(),
+	}
+	out, _ := pr.resolve(Props{
+		"feed":  Optional(func() (any, error) { return map[string]any{"items": []int{1}}, nil }),
+		"other": "x",
+	})
+	if _, ok := out["feed"]; ok {
+		t.Errorf("feed not in only; must be omitted: %v", out)
+	}
+}
+
+func TestResolve_NestedMergeEmitsDottedKey(t *testing.T) {
+	pr := &propsResolver{markers: newMarkers()}
+	_, err := pr.resolve(Props{
+		"auth": map[string]any{"notifications": Merge([]int{1, 2})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, k := range pr.markers.mergeKeys {
+		if k == "auth.notifications" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("nested Merge must emit dotted mergeProps key: %v", pr.markers.mergeKeys)
+	}
+}
