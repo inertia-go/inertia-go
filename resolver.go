@@ -2,6 +2,7 @@ package inertia
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -114,62 +115,115 @@ func (pr *propsResolver) resolveProps(props map[string]any, prefix string, paren
 
 	out := make(map[string]any, len(props))
 	for _, key := range keys {
-		prop := props[key]
 		path := joinPath(prefix, key)
-
-		if !pr.shouldInclude(path, prop, parentResolved) {
-			continue
-		}
-		// A once prop the client already has cached (and didn't explicitly
-		// request, and isn't Fresh) still emits its metadata, but its value is
-		// skipped. Match the v0.9 ordering: metadata first, then skip.
-		if pr.shouldSkipOnce(path, prop) {
-			pr.collectMetadata(path, prop)
-			continue
-		}
-		if !pr.isPartial && pr.excludeFromInitial(path, prop) {
-			continue
-		}
-
-		val, err := pr.resolveValue(prop)
+		val, include, err := pr.resolveItem(props[key], path, parentResolved)
 		if err != nil {
-			if isRescuable(prop) {
-				pr.rescued = append(pr.rescued, path)
-				continue
-			}
 			return nil, err
 		}
-
-		// Unwrap one level: a closure that returned a prop-type.
-		if isPropType(val) {
-			prop = val
-			if !pr.isPartial && pr.excludeFromInitial(path, prop) {
-				continue
-			}
-			if val, err = pr.resolveValue(prop); err != nil {
-				if isRescuable(prop) {
-					pr.rescued = append(pr.rescued, path)
-					continue
-				}
-				return nil, err
-			}
-		}
-
-		pr.collectMetadata(path, prop)
-
-		// Scroll values nest under their wrapper; do not recurse into them.
-		if sp, ok := prop.(*scrollProp); ok {
-			val = map[string]any{sp.wrapper: val}
-		} else if m, ok := val.(map[string]any); ok {
-			child, err := pr.resolveProps(m, path, parentResolved || isClosureProp(prop))
-			if err != nil {
-				return nil, err
-			}
-			val = child
+		if !include {
+			continue
 		}
 		out[key] = val
 	}
 	return out, nil
+}
+
+// resolveArray resolves the elements of an indexed array, recursing into each
+// element by its numeric-index path (prefix.0, prefix.1, ...). Mirrors the
+// official is_array recursion, which treats list arrays the same as maps: a
+// prop-type inside an element is resolved or excluded just like a map field.
+// Excluded elements (e.g. an Optional element on initial load) are omitted from
+// the output slice; element order is otherwise preserved.
+func (pr *propsResolver) resolveArray(arr []any, prefix string, parentResolved bool) ([]any, error) {
+	out := make([]any, 0, len(arr))
+	for i, elem := range arr {
+		path := joinPath(prefix, strconv.Itoa(i))
+		val, include, err := pr.resolveItem(elem, path, parentResolved)
+		if err != nil {
+			return nil, err
+		}
+		if !include {
+			continue
+		}
+		out = append(out, val)
+	}
+	return out, nil
+}
+
+// resolveItem resolves a single value at path (a map field value or an array
+// element). It returns include=false when the value must be omitted (filtered
+// out on a partial reload, skipped once-cache, excluded from the initial
+// response, or rescued after a callback error). Shared by resolveProps and
+// resolveArray so map fields and array elements follow identical rules.
+func (pr *propsResolver) resolveItem(prop any, path string, parentResolved bool) (any, bool, error) {
+	if !pr.shouldInclude(path, prop, parentResolved) {
+		return nil, false, nil
+	}
+	// A once prop the client already has cached (and isn't Fresh) still emits
+	// its metadata, but its value is skipped. Match the ordering: metadata
+	// first, then skip.
+	if pr.shouldSkipOnce(path, prop) {
+		pr.collectMetadata(path, prop)
+		return nil, false, nil
+	}
+	if !pr.isPartial && pr.excludeFromInitial(path, prop) {
+		return nil, false, nil
+	}
+
+	val, err := pr.resolveValue(prop)
+	if err != nil {
+		if isRescuable(prop) {
+			pr.rescued = append(pr.rescued, path)
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	// Unwrap one level: a closure that returned a prop-type.
+	if isPropType(val) {
+		prop = val
+		if !pr.isPartial && pr.excludeFromInitial(path, prop) {
+			return nil, false, nil
+		}
+		if val, err = pr.resolveValue(prop); err != nil {
+			if isRescuable(prop) {
+				pr.rescued = append(pr.rescued, path)
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+	}
+
+	pr.collectMetadata(path, prop)
+
+	childResolved := parentResolved || isClosureProp(prop)
+	// Scroll values nest under their wrapper; do not recurse into them.
+	if sp, ok := prop.(*scrollProp); ok {
+		val = map[string]any{sp.wrapper: val}
+	} else if m, ok := val.(map[string]any); ok {
+		child, err := pr.resolveProps(m, path, childResolved)
+		if err != nil {
+			return nil, false, err
+		}
+		val = child
+	} else if arr, ok := val.([]any); ok {
+		child, err := pr.resolveArray(arr, path, childResolved)
+		if err != nil {
+			return nil, false, err
+		}
+		val = child
+	} else if maps, ok := val.([]map[string]any); ok {
+		norm := make([]any, len(maps))
+		for i := range maps {
+			norm[i] = maps[i]
+		}
+		child, err := pr.resolveArray(norm, path, childResolved)
+		if err != nil {
+			return nil, false, err
+		}
+		val = child
+	}
+	return val, true, nil
 }
 
 func (pr *propsResolver) shouldInclude(path string, prop any, parentResolved bool) bool {

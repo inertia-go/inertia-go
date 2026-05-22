@@ -284,3 +284,112 @@ func TestResolve_OptionalMergeMetadataOnInitial(t *testing.T) {
 		t.Errorf("Optional().Merge() must still emit items in mergeKeys: %v", pr.markers.mergeKeys)
 	}
 }
+
+// TestResolve_ArrayPartialOptionalResolved ports the official PropsResolverTest
+// case: a partial only=["foos"] over an indexed array of maps, where each
+// element holds an Optional field, resolves the Optional inside each element
+// (foos.0.bar) because foos matchesOnly and descendants are included.
+func TestResolve_ArrayPartialOptionalResolved(t *testing.T) {
+	pr := &propsResolver{
+		isPartial: true,
+		only:      []string{"foos"},
+		markers:   newMarkers(),
+	}
+	out, err := pr.resolve(Props{
+		"foos": []any{
+			map[string]any{"name": "First", "bar": Optional(func() (any, error) { return "b1", nil })},
+			map[string]any{"name": "Second", "bar": Optional(func() (any, error) { return "b2", nil })},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foos, ok := out["foos"].([]any)
+	if !ok || len(foos) != 2 {
+		t.Fatalf("foos must be a 2-element slice: %#v", out["foos"])
+	}
+	e0, _ := foos[0].(map[string]any)
+	if e0 == nil || e0["name"] != "First" || e0["bar"] != "b1" {
+		t.Errorf("foos[0] must include name and resolved Optional bar: %#v", e0)
+	}
+	e1, _ := foos[1].(map[string]any)
+	if e1 == nil || e1["name"] != "Second" || e1["bar"] != "b2" {
+		t.Errorf("foos[1] must include name and resolved Optional bar: %#v", e1)
+	}
+}
+
+// TestResolve_ArrayInitialOptionalExcluded ports the official case: on an
+// initial (non-partial) load, an Optional field inside an array element is
+// excluded and its closure is NOT invoked, while sibling static fields remain.
+func TestResolve_ArrayInitialOptionalExcluded(t *testing.T) {
+	invoked := false
+	pr := &propsResolver{markers: newMarkers(), deferred: map[string][]string{}}
+	out, err := pr.resolve(Props{
+		"foos": []any{
+			map[string]any{
+				"name": "First",
+				"bar": Optional(func() (any, error) {
+					invoked = true
+					return "b1", nil
+				}),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invoked {
+		t.Error("Optional closure inside array element must NOT be invoked on initial load")
+	}
+	foos, ok := out["foos"].([]any)
+	if !ok || len(foos) != 1 {
+		t.Fatalf("foos must be a 1-element slice: %#v", out["foos"])
+	}
+	e0, _ := foos[0].(map[string]any)
+	if e0 == nil || e0["name"] != "First" {
+		t.Errorf("foos[0].name must be present: %#v", e0)
+	}
+	if _, ok := e0["bar"]; ok {
+		t.Errorf("foos[0].bar (Optional) must be absent on initial load: %#v", e0)
+	}
+}
+
+// TestResolve_ArrayOfMapsNormalized verifies []map[string]any input is
+// normalized and recursed just like []any, resolving nested Optional fields.
+func TestResolve_ArrayOfMapsNormalized(t *testing.T) {
+	pr := &propsResolver{
+		isPartial: true,
+		only:      []string{"foos"},
+		markers:   newMarkers(),
+	}
+	out, err := pr.resolve(Props{
+		"foos": []map[string]any{
+			{"name": "First", "bar": Optional(func() (any, error) { return "b1", nil })},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foos, ok := out["foos"].([]any)
+	if !ok || len(foos) != 1 {
+		t.Fatalf("foos must normalize to a 1-element []any: %#v", out["foos"])
+	}
+	e0, _ := foos[0].(map[string]any)
+	if e0 == nil || e0["bar"] != "b1" {
+		t.Errorf("nested Optional in []map element must resolve: %#v", e0)
+	}
+}
+
+// TestResolve_ArrayScalarsPreserved verifies a plain scalar array is passed
+// through unchanged and in order.
+func TestResolve_ArrayScalarsPreserved(t *testing.T) {
+	pr := &propsResolver{markers: newMarkers(), deferred: map[string][]string{}}
+	out, err := pr.resolve(Props{"nums": []any{3, 1, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := out["nums"].([]any)
+	if !ok || len(got) != 3 || got[0] != 3 || got[1] != 1 || got[2] != 2 {
+		t.Errorf("scalar array must be preserved in order: %#v", out["nums"])
+	}
+}

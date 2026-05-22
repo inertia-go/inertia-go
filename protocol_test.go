@@ -971,3 +971,41 @@ func TestProtocol_TopLevelDotKeyUnpacks(t *testing.T) {
 		t.Errorf("top-level dot key must unpack to nested auth.user: %v", page.Props)
 	}
 }
+
+// TestProtocol_ArrayElementOptionalResolvedOnPartial is the e2e for FIX #3: a
+// partial only=["foos"] over an indexed array whose elements each carry an
+// Optional field resolves that field inside every element.
+func TestProtocol_ArrayElementOptionalResolvedOnPartial(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Listing", Props{
+			"foos": []any{
+				map[string]any{"name": "First", "bar": Optional(func() (any, error) { return "b1", nil })},
+				map[string]any{"name": "Second", "bar": Optional(func() (any, error) { return "b2", nil })},
+			},
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/listing", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Listing")
+	req.Header.Set("X-Inertia-Partial-Data", "foos")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	foos, ok := page.Props["foos"].([]any)
+	if !ok || len(foos) != 2 {
+		t.Fatalf("foos must be a 2-element array: %#v", page.Props["foos"])
+	}
+	e0, _ := foos[0].(map[string]any)
+	if e0 == nil || e0["name"] != "First" || e0["bar"] != "b1" {
+		t.Errorf("foos[0] must include name and resolved Optional bar: %#v", e0)
+	}
+	e1, _ := foos[1].(map[string]any)
+	if e1 == nil || e1["name"] != "Second" || e1["bar"] != "b2" {
+		t.Errorf("foos[1] must include name and resolved Optional bar: %#v", e1)
+	}
+}
