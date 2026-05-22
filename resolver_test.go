@@ -196,3 +196,91 @@ func TestResolve_NestedMergeEmitsDottedKey(t *testing.T) {
 		t.Errorf("nested Merge must emit dotted mergeProps key: %v", pr.markers.mergeKeys)
 	}
 }
+
+func hasKey(list []string, want string) bool {
+	for _, k := range list {
+		if k == want {
+			return true
+		}
+	}
+	return false
+}
+
+// deferMerge builds a Deferred prop that is also mergeable. The package has no
+// chainable .Merge() on a deferred builder, so the field is set directly to
+// model the official Defer()->shouldMerge state.
+func deferMerge(fn func() (any, error)) *propBuilder {
+	b := Defer(fn)
+	b.merge = true
+	return b
+}
+
+func deferOnce(fn func() (any, error)) *propBuilder {
+	b := Defer(fn)
+	b.once = true
+	return b
+}
+
+func optionalMerge(fn func() (any, error)) *propBuilder {
+	b := Optional(fn)
+	b.merge = true
+	return b
+}
+
+// TestResolve_DeferMergeMetadataOnInitial asserts that a deferred mergeable prop
+// excluded from the initial response still emits its merge metadata (and the
+// deferred group), matching the official excludeIgnoredProp behavior.
+func TestResolve_DeferMergeMetadataOnInitial(t *testing.T) {
+	pr := &propsResolver{markers: newMarkers(), deferred: map[string][]string{}}
+	out, err := pr.resolve(Props{
+		"feed": deferMerge(func() (any, error) { return []int{1}, nil }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out["feed"]; ok {
+		t.Errorf("deferred prop must be excluded from initial output: %v", out)
+	}
+	if !hasKey(pr.markers.mergeKeys, "feed") {
+		t.Errorf("Defer().Merge() must still emit feed in mergeKeys: %v", pr.markers.mergeKeys)
+	}
+	if !hasKey(pr.deferred["default"], "feed") {
+		t.Errorf("Defer().Merge() must still emit feed in deferred group default: %v", pr.deferred)
+	}
+}
+
+// TestResolve_DeferOnceMetadataOnInitial asserts that a deferred once prop
+// excluded from the initial response still emits its once metadata.
+func TestResolve_DeferOnceMetadataOnInitial(t *testing.T) {
+	pr := &propsResolver{markers: newMarkers(), deferred: map[string][]string{}}
+	out, err := pr.resolve(Props{
+		"feed": deferOnce(func() (any, error) { return []int{1}, nil }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out["feed"]; ok {
+		t.Errorf("deferred prop must be excluded from initial output: %v", out)
+	}
+	if got, ok := pr.markers.onceProps["feed"]; !ok || got.Prop != "feed" {
+		t.Errorf("Defer().Once() must still emit onceProps[feed]: %+v", pr.markers.onceProps)
+	}
+}
+
+// TestResolve_OptionalMergeMetadataOnInitial asserts that an optional mergeable
+// prop excluded from the initial response still emits its merge metadata.
+func TestResolve_OptionalMergeMetadataOnInitial(t *testing.T) {
+	pr := &propsResolver{markers: newMarkers(), deferred: map[string][]string{}}
+	out, err := pr.resolve(Props{
+		"items": optionalMerge(func() (any, error) { return []int{1}, nil }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out["items"]; ok {
+		t.Errorf("optional prop must be excluded from initial output: %v", out)
+	}
+	if !hasKey(pr.markers.mergeKeys, "items") {
+		t.Errorf("Optional().Merge() must still emit items in mergeKeys: %v", pr.markers.mergeKeys)
+	}
+}

@@ -191,8 +191,10 @@ func (pr *propsResolver) pathMatches(path string) bool {
 }
 
 // excludeFromInitial drops Optional and Deferred props from the initial
-// (non-partial) response, collecting deferred-group metadata. Returns true
-// when the prop must be skipped.
+// (non-partial) response. Before discarding the value it collects the metadata
+// the client needs for the deferred follow-up: deferred-group membership (for
+// Deferred), plus merge and once metadata for either kind. Mirrors the official
+// excludeIgnoredProp. Returns true when the prop must be skipped.
 func (pr *propsResolver) excludeFromInitial(path string, prop any) bool {
 	b, ok := asBuilder(prop)
 	if !ok {
@@ -200,9 +202,17 @@ func (pr *propsResolver) excludeFromInitial(path string, prop any) bool {
 	}
 	switch b.kind {
 	case kindOptional:
+		if b.shouldMerge() {
+			pr.collectMergeMetadata(path, b)
+		}
+		pr.collectOnceMetadata(path, b)
 		return true
 	case kindDeferred:
 		pr.deferred[b.defGrp] = append(pr.deferred[b.defGrp], path)
+		if b.shouldMerge() {
+			pr.collectMergeMetadata(path, b)
+		}
+		pr.collectOnceMetadata(path, b)
 		return true
 	}
 	return false
@@ -258,38 +268,59 @@ func (pr *propsResolver) collectMetadata(path, key string, prop any) {
 	if !ok {
 		return
 	}
-	if !pr.reset[path] {
-		nested := len(b.prependPath) > 0 || len(b.appendPath) > 0
-		if b.merge && !nested {
-			pr.markers.mergeKeys = append(pr.markers.mergeKeys, path)
-		}
-		if b.deepMerge {
-			pr.markers.deepKeys = append(pr.markers.deepKeys, path)
-		}
-		for _, p := range b.prependPath {
-			pr.markers.prependKeys = append(pr.markers.prependKeys, joinPath(path, p))
-		}
-		for _, p := range b.appendPath {
-			if p != "" {
-				pr.markers.mergeKeys = append(pr.markers.mergeKeys, joinPath(path, p))
-			}
-		}
-		for sub, field := range b.matchOn {
-			pr.markers.matchOn = append(pr.markers.matchOn, joinPath(joinPath(path, sub), field))
+	pr.collectMergeMetadata(path, b)
+	pr.collectOnceMetadata(path, b)
+}
+
+// collectMergeMetadata appends a prop's merge/deep/prepend/append/matchOn
+// markers keyed on the full dot path. Reset suppresses all merge intent
+// (official collectMergeableMetadata checks reset first). It is shared by
+// collectMetadata and excludeFromInitial so deferred/optional props excluded
+// from the initial response still surface their merge metadata.
+func (pr *propsResolver) collectMergeMetadata(path string, b *propBuilder) {
+	if pr.reset[path] {
+		return
+	}
+	nested := len(b.prependPath) > 0 || len(b.appendPath) > 0
+	if b.merge && !nested {
+		pr.markers.mergeKeys = append(pr.markers.mergeKeys, path)
+	}
+	if b.deepMerge {
+		pr.markers.deepKeys = append(pr.markers.deepKeys, path)
+	}
+	for _, p := range b.prependPath {
+		pr.markers.prependKeys = append(pr.markers.prependKeys, joinPath(path, p))
+	}
+	for _, p := range b.appendPath {
+		if p != "" {
+			pr.markers.mergeKeys = append(pr.markers.mergeKeys, joinPath(path, p))
 		}
 	}
-	if b.once {
-		onceKey := path
-		if b.onceKey != "" {
-			onceKey = b.onceKey
-		}
-		var exp *int64
-		if b.onceTTL > 0 {
-			ms := time.Now().Add(b.onceTTL).UnixMilli()
-			exp = &ms
-		}
-		pr.markers.onceProps[onceKey] = OnceConfig{Prop: path, ExpiresAt: exp}
+	for sub, field := range b.matchOn {
+		pr.markers.matchOn = append(pr.markers.matchOn, joinPath(joinPath(path, sub), field))
 	}
+}
+
+// collectOnceMetadata records a once prop's cache key + TTL keyed on the alias
+// (or full dot path). Shared by collectMetadata and excludeFromInitial.
+func (pr *propsResolver) collectOnceMetadata(path string, b *propBuilder) {
+	if !b.once {
+		return
+	}
+	onceKey := path
+	if b.onceKey != "" {
+		onceKey = b.onceKey
+	}
+	var exp *int64
+	if b.onceTTL > 0 {
+		ms := time.Now().Add(b.onceTTL).UnixMilli()
+		exp = &ms
+	}
+	pr.markers.onceProps[onceKey] = OnceConfig{Prop: path, ExpiresAt: exp}
+}
+
+func (b *propBuilder) shouldMerge() bool {
+	return b.merge || b.deepMerge || len(b.prependPath) > 0 || len(b.appendPath) > 0 || len(b.matchOn) > 0
 }
 
 // shouldSkipOnce reports whether a once prop is client-cached and must be
