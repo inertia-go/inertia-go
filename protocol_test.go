@@ -508,6 +508,47 @@ func TestProtocol_OnceProps_NestedPathCacheSkip(t *testing.T) {
 	}
 }
 
+// TestProtocol_OnceProps_NonInertiaRequestDoesNotCacheSkip verifies the once
+// cache-skip is gated on isInertia, matching the official resolver
+// (excludeFromInitialResponse's already-loaded branch is `isInertia &&
+// wasAlreadyLoadedByClient`). A non-Inertia document request that nonetheless
+// carries X-Inertia-Except-Once-Props must still resolve and send the once prop
+// (the value is embedded in the initial HTML page object), not cache-skip it.
+func TestProtocol_OnceProps_NonInertiaRequestDoesNotCacheSkip(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Billing", Props{
+			"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }),
+		})
+	}))
+	// No X-Inertia header → a full HTML document request. The Except-Once-Props
+	// header is present but must be ignored for cache-skip purposes.
+	req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+	req.Header.Set("X-Inertia-Except-Once-Props", "plans")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	const open = `<script data-page="app" type="application/json">`
+	const closeTag = `</script>`
+	start := strings.Index(body, open)
+	if start < 0 {
+		t.Fatalf("script open tag missing: %s", body)
+	}
+	rest := body[start+len(open):]
+	end := strings.Index(rest, closeTag)
+	if end < 0 {
+		t.Fatalf("script close tag missing: %s", body)
+	}
+	var page PageObject
+	if err := json.Unmarshal([]byte(rest[:end]), &page); err != nil {
+		t.Fatalf("page JSON: %v", err)
+	}
+	if _, ok := page.Props["plans"]; !ok {
+		t.Errorf("non-Inertia request must not cache-skip a once prop: %v", page.Props)
+	}
+}
+
 func TestProtocol_NoRescue_StillFailsResponse(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

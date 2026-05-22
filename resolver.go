@@ -82,6 +82,7 @@ func newMarkers() *propMarkers {
 
 type propsResolver struct {
 	isPartial     bool
+	isInertia     bool
 	only          []string // nil when not a partial reload or no Partial-Data
 	except        []string
 	exceptOnce    map[string]bool
@@ -162,10 +163,11 @@ func (pr *propsResolver) resolveItem(prop any, path string, parentResolved bool)
 	// A once prop the client already has cached (and isn't Fresh) still emits
 	// its metadata, but its value is skipped. The official cache-skip
 	// (wasAlreadyLoadedByClient) is reachable only inside
-	// excludeFromInitialResponse, which is gated on !isPartial — so this skip
-	// fires only on the initial (non-partial) response. On a partial reload an
-	// already-loaded once prop is re-resolved and sent.
-	if !pr.isPartial && pr.shouldSkipOnce(path, prop) {
+	// excludeFromInitialResponse, gated on !isPartial, and is itself further
+	// gated on isInertia — so this skip fires only on an initial (non-partial)
+	// Inertia request. On a partial reload, or a non-Inertia document request,
+	// an already-loaded once prop is resolved and sent.
+	if !pr.isPartial && pr.isInertia && pr.shouldSkipOnce(path, prop) {
 		pr.collectMetadata(path, prop)
 		return nil, false, nil
 	}

@@ -78,6 +78,7 @@ func (i *Inertia) Render(w http.ResponseWriter, r *http.Request, component strin
 	isPartial := info.PartialComponent != "" && info.PartialComponent == component
 	pr := &propsResolver{
 		isPartial:     isPartial,
+		isInertia:     info.IsInertia,
 		except:        info.PartialExcept,
 		exceptOnce:    setOf(info.ExceptOnceProps),
 		scrollPrepend: info.ScrollMergeIntent == "prepend",
