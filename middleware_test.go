@@ -179,7 +179,9 @@ func TestMiddleware_ResponseControllerFlushDrainsSession(t *testing.T) {
 	i := newCookieInertia(t)
 
 	var flushErr error
+	done := make(chan struct{})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
 		ValidationErrors(r).Add("email", "required")
 		i.persistCollectors(w, r) // buffer the flash into the accumulator
 		flushErr = http.NewResponseController(w).Flush()
@@ -193,6 +195,9 @@ func TestMiddleware_ResponseControllerFlushDrainsSession(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// The handler runs in the server's goroutine; wait for it to finish so the
+	// flushErr write happens-before this read (mirrors the Hijack test's sync).
+	<-done
 	if flushErr != nil {
 		t.Fatalf("ResponseController.Flush did not reach underlying writer: %v", flushErr)
 	}

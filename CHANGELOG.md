@@ -3,6 +3,59 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] — unreleased
+
+### Added
+
+- **Recursive nested props resolver.** Props are now resolved by walking the
+  prop tree instead of only top-level keys, matching the official Laravel
+  `PropsResolver`. Nested maps may contain prop-type wrappers
+  (`Optional`/`Defer`/`Merge`/`DeepMerge`/`Once`/`Scroll`), and partial-reload
+  selectors support dot notation (`X-Inertia-Partial-Data: auth.user`,
+  `X-Inertia-Partial-Except: auth.token`).
+- Top-level dot keys are unpacked into nested maps (`Props{"auth.user": …}` →
+  `props.auth.user`).
+- A closure that returns a nested map marks its children "resolved" so they
+  bypass the partial filter (parentWasResolved), matching the official engine.
+- Nested `Merge`/`Scroll`/`Once`/etc. emit dotted metadata keys
+  (`mergeProps: ["auth.notifications"]`).
+- Indexed arrays are now recursed, so prop-type wrappers inside array elements
+  resolve by their numeric-index path (`foos.0.bar`) — an `Optional` inside a
+  list element is resolved on a matching partial reload and excluded from the
+  initial response, matching the official `is_array` recursion.
+- `Optional`/`Defer` props excluded from the initial response now still emit
+  their `mergeProps`/`deepMergeProps`/`onceProps` metadata (so a deferred
+  follow-up merges or caches correctly), matching the official
+  `excludeIgnoredProp`.
+- On a partial reload, `mergeProps`/`onceProps` metadata is collected only for
+  paths that actually match the partial selector — an ancestor path traversed
+  solely to reach a requested leaf no longer surfaces its own merge/once
+  metadata (official `isIncludedInPartialMetadata`).
+
+### Changed
+
+- Once cache-skip now aligns with the official engine: the
+  `X-Inertia-Except-Once-Props` cache-skip only applies on the **initial**
+  (non-partial) response. On a partial reload, an explicitly resolved once prop
+  is re-resolved and sent (only `.Fresh()` and the initial-load skip affect it).
+  The cache-skip key is the `.As()` alias or the full dot path (e.g.
+  `config.locale`), not a leaf key.
+
+- Prop evaluation is now **synchronous** (the previous goroutine-concurrent
+  evaluation is removed). Deferred/scroll props are excluded from the initial
+  response anyway, so the eager set is small.
+
+### Note
+
+- Nested maps are now recursed. Props whose values are pure data are
+  unaffected (leaves are returned unchanged); the new behavior only applies to
+  nested prop-type wrappers and dot-notation selectors. The main wire change is
+  that nested wrapper keys use dot paths.
+- Partial reloads now follow the official engine: `Optional`/`Defer` props are
+  excluded only from the *initial* response, so a partial reload with only
+  `X-Inertia-Partial-Except` (or no `X-Inertia-Partial-Data` at all) may now
+  surface `Optional` props that the previous flat filter excluded.
+
 ## [0.9.0] — 2026-05-21
 
 ### Fixed

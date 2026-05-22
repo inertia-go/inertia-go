@@ -398,11 +398,13 @@ func TestProtocol_OnceProps_AsAliasCacheSkip(t *testing.T) {
 	}
 }
 
-// TestProtocol_OnceProps_ExplicitPartialForcesRefresh verifies the v3 rule
-// that an explicit partial reload (X-Inertia-Partial-Data lists the key)
-// re-resolves a once prop even when the client also reports it cached via
-// X-Inertia-Except-Once-Props. The explicit request wins over the cache skip.
-func TestProtocol_OnceProps_ExplicitPartialForcesRefresh(t *testing.T) {
+// TestProtocol_OnceProps_PartialReloadResolvesAlreadyLoaded verifies alignment
+// with the official PropsResolver: the once cache-skip
+// (wasAlreadyLoadedByClient) is reachable only inside excludeFromInitialResponse,
+// which is gated on !isPartial. So on a PARTIAL reload an already-loaded once
+// prop is NOT cache-skipped — it is re-resolved and SENT. Its onceProps metadata
+// is still emitted.
+func TestProtocol_OnceProps_PartialReloadResolvesAlreadyLoaded(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i.Render(w, r, "Billing", Props{
@@ -422,10 +424,128 @@ func TestProtocol_OnceProps_ExplicitPartialForcesRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := p.Props["plans"]; !ok {
-		t.Errorf("explicit Partial-Data must force re-resolve of once prop despite Except-Once-Props: %v", p.Props)
+		t.Errorf("on a partial reload an already-loaded once prop must be re-resolved and sent: %v", p.Props)
 	}
 	if _, ok := p.OnceProps["plans"]; !ok {
-		t.Error("onceProps metadata must still be emitted on forced refresh")
+		t.Error("onceProps metadata must still be emitted on a partial reload")
+	}
+}
+
+// TestProtocol_OnceProps_FreshForcesRefresh verifies that .Fresh() overrides the
+// cache skip: a Once(fn).Fresh() prop is re-resolved (present in props) even
+// when reported cached via X-Inertia-Except-Once-Props.
+func TestProtocol_OnceProps_FreshForcesRefresh(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Billing", Props{
+			"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }).Fresh(),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Billing")
+	req.Header.Set("X-Inertia-Partial-Data", "plans")
+	req.Header.Set("X-Inertia-Except-Once-Props", "plans")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var p PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.Props["plans"]; !ok {
+		t.Errorf("Fresh() once prop must re-resolve despite Except-Once-Props: %v", p.Props)
+	}
+	if _, ok := p.OnceProps["plans"]; !ok {
+		t.Error("onceProps metadata must still be emitted on a Fresh once prop")
+	}
+}
+
+// TestProtocol_OnceProps_NestedPathCacheSkip verifies the cache-skip key is the
+// full dot path, not the leaf key. A once prop at config.locale reported cached
+// via X-Inertia-Except-Once-Props: config.locale is skipped (value omitted),
+// and its onceProps[config.locale] metadata is still emitted.
+func TestProtocol_OnceProps_NestedPathCacheSkip(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	mk := func(except string) PageObject {
+		h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			i.Render(w, r, "Settings", Props{
+				"config": map[string]any{
+					"locale": Once(func() (any, error) { return "en", nil }),
+				},
+			})
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req.Header.Set("X-Inertia", "true")
+		if except != "" {
+			req.Header.Set("X-Inertia-Except-Once-Props", except)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var p PageObject
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	first := mk("")
+	cfg, _ := first.Props["config"].(map[string]any)
+	if cfg == nil || cfg["locale"] != "en" {
+		t.Errorf("first load must include config.locale: %v", first.Props)
+	}
+	if _, ok := first.OnceProps["config.locale"]; !ok {
+		t.Errorf("onceProps must be keyed by full path config.locale: %+v", first.OnceProps)
+	}
+	cached := mk("config.locale")
+	cfg2, _ := cached.Props["config"].(map[string]any)
+	if cfg2 != nil {
+		if _, ok := cfg2["locale"]; ok {
+			t.Errorf("nested once prop reported cached by full path must be skipped: %v", cfg2)
+		}
+	}
+	if _, ok := cached.OnceProps["config.locale"]; !ok {
+		t.Error("onceProps[config.locale] metadata must persist on cached response")
+	}
+}
+
+// TestProtocol_OnceProps_NonInertiaRequestDoesNotCacheSkip verifies the once
+// cache-skip is gated on isInertia, matching the official resolver
+// (excludeFromInitialResponse's already-loaded branch is `isInertia &&
+// wasAlreadyLoadedByClient`). A non-Inertia document request that nonetheless
+// carries X-Inertia-Except-Once-Props must still resolve and send the once prop
+// (the value is embedded in the initial HTML page object), not cache-skip it.
+func TestProtocol_OnceProps_NonInertiaRequestDoesNotCacheSkip(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Billing", Props{
+			"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }),
+		})
+	}))
+	// No X-Inertia header → a full HTML document request. The Except-Once-Props
+	// header is present but must be ignored for cache-skip purposes.
+	req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+	req.Header.Set("X-Inertia-Except-Once-Props", "plans")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	const open = `<script data-page="app" type="application/json">`
+	const closeTag = `</script>`
+	start := strings.Index(body, open)
+	if start < 0 {
+		t.Fatalf("script open tag missing: %s", body)
+	}
+	rest := body[start+len(open):]
+	end := strings.Index(rest, closeTag)
+	if end < 0 {
+		t.Fatalf("script close tag missing: %s", body)
+	}
+	var page PageObject
+	if err := json.Unmarshal([]byte(rest[:end]), &page); err != nil {
+		t.Fatalf("page JSON: %v", err)
+	}
+	if _, ok := page.Props["plans"]; !ok {
+		t.Errorf("non-Inertia request must not cache-skip a once prop: %v", page.Props)
 	}
 }
 
@@ -783,5 +903,150 @@ func TestProtocol_PrecognitionEndToEnd(t *testing.T) {
 	}
 	if actionRan {
 		t.Error("real action must not run on a failed precognitive request")
+	}
+}
+
+func TestProtocol_ComponentMismatch_FallsBackToFull(t *testing.T) {
+	// A partial-component header that does not match the rendered component is
+	// not a partial reload: the response is full, so an Optional prop is still
+	// excluded from the initial full response, and an eager prop is present.
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Users/Index", Props{
+			"users":    []string{"alice"},
+			"optional": Optional(func() (any, error) { return "lazy", nil }),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/users", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Other/Page") // does NOT match
+	req.Header.Set("X-Inertia-Partial-Data", "optional")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := page.Props["users"]; !ok {
+		t.Errorf("eager prop must be present on full fallback: %v", page.Props)
+	}
+	if _, ok := page.Props["optional"]; ok {
+		t.Errorf("component mismatch is not a partial; Optional must be excluded: %v", page.Props)
+	}
+}
+
+func TestProtocol_NestedPartialDataSelector(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "App", Props{
+			"auth": map[string]any{
+				"user":  Optional(func() (any, error) { return "alice", nil }),
+				"token": Optional(func() (any, error) { return "xyz", nil }),
+			},
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "App")
+	req.Header.Set("X-Inertia-Partial-Data", "auth.user")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	auth, ok := page.Props["auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("auth must be present: %v", page.Props)
+	}
+	if auth["user"] != "alice" {
+		t.Errorf("auth.user must be included: %v", auth)
+	}
+	if _, ok := auth["token"]; ok {
+		t.Errorf("auth.token must be excluded by the dot selector: %v", auth)
+	}
+}
+
+func TestProtocol_NestedPartialExcept(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "App", Props{
+			"auth": map[string]any{"user": "alice", "token": "xyz"},
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "App")
+	req.Header.Set("X-Inertia-Partial-Except", "auth.token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	_ = json.Unmarshal(rec.Body.Bytes(), &page)
+	auth, _ := page.Props["auth"].(map[string]any)
+	if auth["user"] != "alice" {
+		t.Errorf("auth.user must remain: %v", auth)
+	}
+	if _, ok := auth["token"]; ok {
+		t.Errorf("auth.token must be excluded by nested except: %v", auth)
+	}
+}
+
+func TestProtocol_TopLevelDotKeyUnpacks(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "App", Props{
+			"auth.user": "alice",
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/app", nil)
+	req.Header.Set("X-Inertia", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var page PageObject
+	_ = json.Unmarshal(rec.Body.Bytes(), &page)
+	auth, ok := page.Props["auth"].(map[string]any)
+	if !ok || auth["user"] != "alice" {
+		t.Errorf("top-level dot key must unpack to nested auth.user: %v", page.Props)
+	}
+}
+
+// TestProtocol_ArrayElementOptionalResolvedOnPartial is the e2e for FIX #3: a
+// partial only=["foos"] over an indexed array whose elements each carry an
+// Optional field resolves that field inside every element.
+func TestProtocol_ArrayElementOptionalResolvedOnPartial(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Listing", Props{
+			"foos": []any{
+				map[string]any{"name": "First", "bar": Optional(func() (any, error) { return "b1", nil })},
+				map[string]any{"name": "Second", "bar": Optional(func() (any, error) { return "b2", nil })},
+			},
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/listing", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Listing")
+	req.Header.Set("X-Inertia-Partial-Data", "foos")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var page PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	foos, ok := page.Props["foos"].([]any)
+	if !ok || len(foos) != 2 {
+		t.Fatalf("foos must be a 2-element array: %#v", page.Props["foos"])
+	}
+	e0, _ := foos[0].(map[string]any)
+	if e0 == nil || e0["name"] != "First" || e0["bar"] != "b1" {
+		t.Errorf("foos[0] must include name and resolved Optional bar: %#v", e0)
+	}
+	e1, _ := foos[1].(map[string]any)
+	if e1 == nil || e1["name"] != "Second" || e1["bar"] != "b2" {
+		t.Errorf("foos[1] must include name and resolved Optional bar: %#v", e1)
 	}
 }

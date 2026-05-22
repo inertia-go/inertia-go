@@ -92,7 +92,7 @@ without backward compatibility for v1 or v2.
 |---|---|
 | `X-Inertia` request/response header | ✅ |
 | `X-Inertia-Version` + 409 mismatch | ✅ |
-| `X-Inertia-Partial-Data` / `-Partial-Component` / `-Partial-Except` | ✅ |
+| `X-Inertia-Partial-Data` / `-Partial-Component` / `-Partial-Except` | ✅ (dot-notation nested selectors supported) |
 | `X-Inertia-Reset` | ✅ — suppresses listed props from `mergeProps`/`prependProps`/`deepMergeProps` and sets `scrollProps.<key>.reset`; also exposed via `FromRequest(r).Reset` |
 | `Purpose: prefetch` | Parsed; exposed via `FromRequest(r).IsPrefetch` |
 | `X-Inertia-Location` (external redirect) | ✅ |
@@ -111,6 +111,24 @@ without backward compatibility for v1 or v2.
 | SSR HTTP client | ✅ |
 | Vite manifest helper | ✅ |
 | Precognition (validate-only primitive) | ✅ |
+
+## Nested props
+
+Props are resolved recursively. A nested map may contain prop-type wrappers,
+and partial-reload selectors use dot notation:
+
+```go
+i.Render(w, r, "App", inertia.Props{
+    "auth": map[string]any{
+        "user":  inertia.Optional(loadUser),   // X-Inertia-Partial-Data: auth.user
+        "token": inertia.Optional(loadToken),
+    },
+})
+```
+
+A top-level dot key (`"auth.user"`) is unpacked into a nested map. Nested
+`Merge`/`Scroll`/`Once` emit dotted metadata keys (e.g. `mergeProps:
+["auth.notifications"]`). Prop evaluation is synchronous.
 
 > **Precognition note:** Unlike Laravel's `HandlePrecognitiveRequests`
 > middleware, inertia-go does not auto-run validation rules or skip the
