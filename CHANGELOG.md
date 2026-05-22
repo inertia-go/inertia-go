@@ -19,8 +19,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bypass the partial filter (parentWasResolved), matching the official engine.
 - Nested `Merge`/`Scroll`/`Once`/etc. emit dotted metadata keys
   (`mergeProps: ["auth.notifications"]`).
+- Indexed arrays are now recursed, so prop-type wrappers inside array elements
+  resolve by their numeric-index path (`foos.0.bar`) — an `Optional` inside a
+  list element is resolved on a matching partial reload and excluded from the
+  initial response, matching the official `is_array` recursion.
+- `Optional`/`Defer` props excluded from the initial response now still emit
+  their `mergeProps`/`deepMergeProps`/`onceProps` metadata (so a deferred
+  follow-up merges or caches correctly), matching the official
+  `excludeIgnoredProp`.
+- On a partial reload, `mergeProps`/`onceProps` metadata is collected only for
+  paths that actually match the partial selector — an ancestor path traversed
+  solely to reach a requested leaf no longer surfaces its own merge/once
+  metadata (official `isIncludedInPartialMetadata`).
 
 ### Changed
+
+- Once cache-skip now aligns with the official engine: the
+  `X-Inertia-Except-Once-Props` cache-skip only applies on the **initial**
+  (non-partial) response. On a partial reload, an explicitly resolved once prop
+  is re-resolved and sent (only `.Fresh()` and the initial-load skip affect it).
+  The cache-skip key is the `.As()` alias or the full dot path (e.g.
+  `config.locale`), not a leaf key.
 
 - Prop evaluation is now **synchronous** (the previous goroutine-concurrent
   evaluation is removed). Deferred/scroll props are excluded from the initial
