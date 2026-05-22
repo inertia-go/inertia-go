@@ -83,7 +83,6 @@ type propsResolver struct {
 	isPartial     bool
 	only          []string // nil when not a partial reload or no Partial-Data
 	except        []string
-	requested     map[string]bool // PartialData as a set (once force-refresh)
 	exceptOnce    map[string]bool
 	scrollPrepend bool
 	reset         map[string]bool
@@ -124,8 +123,8 @@ func (pr *propsResolver) resolveProps(props map[string]any, prefix string, paren
 		// A once prop the client already has cached (and didn't explicitly
 		// request, and isn't Fresh) still emits its metadata, but its value is
 		// skipped. Match the v0.9 ordering: metadata first, then skip.
-		if pr.shouldSkipOnce(path, key, prop) {
-			pr.collectMetadata(path, key, prop)
+		if pr.shouldSkipOnce(path, prop) {
+			pr.collectMetadata(path, prop)
 			continue
 		}
 		if !pr.isPartial && pr.excludeFromInitial(path, prop) {
@@ -156,7 +155,7 @@ func (pr *propsResolver) resolveProps(props map[string]any, prefix string, paren
 			}
 		}
 
-		pr.collectMetadata(path, key, prop)
+		pr.collectMetadata(path, prop)
 
 		// Scroll values nest under their wrapper; do not recurse into them.
 		if sp, ok := prop.(*scrollProp); ok {
@@ -249,7 +248,7 @@ func isRescuable(prop any) bool {
 // the relevant marker lists. Preserves the v0.9 behavior exactly: reset
 // suppression, scroll merge-intent + reset flag, nested-target handling, once
 // alias/TTL. Moved from the old propMarkers.collect, re-keyed on dot path.
-func (pr *propsResolver) collectMetadata(path, key string, prop any) {
+func (pr *propsResolver) collectMetadata(path string, prop any) {
 	if sp, ok := prop.(*scrollProp); ok {
 		cfg := sp.scrollConfig()
 		cfg.Reset = pr.reset[path]
@@ -324,9 +323,12 @@ func (b *propBuilder) shouldMerge() bool {
 }
 
 // shouldSkipOnce reports whether a once prop is client-cached and must be
-// skipped (value not resolved/included). Mirrors v0.9: skip only when reported
-// in exceptOnce (by alias) AND not explicitly requested AND not Fresh.
-func (pr *propsResolver) shouldSkipOnce(path, key string, prop any) bool {
+// skipped (value not resolved/included). Mirrors the official
+// wasAlreadyLoadedByClient: skip when the alias (.As) or, falling back, the
+// full dot path is reported in X-Inertia-Except-Once-Props AND the prop is not
+// .Fresh(). There is no explicit-partial-data force-refresh shortcut in the
+// official resolver; only .Fresh() forces re-resolution.
+func (pr *propsResolver) shouldSkipOnce(path string, prop any) bool {
 	b, ok := asBuilder(prop)
 	if !ok || !b.once {
 		return false
@@ -335,5 +337,5 @@ func (pr *propsResolver) shouldSkipOnce(path, key string, prop any) bool {
 	if b.onceKey != "" {
 		onceKey = b.onceKey
 	}
-	return pr.exceptOnce[onceKey] && !pr.requested[key] && !b.onceFresh
+	return pr.exceptOnce[onceKey] && !b.onceFresh
 }

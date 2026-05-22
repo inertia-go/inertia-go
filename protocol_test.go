@@ -398,11 +398,13 @@ func TestProtocol_OnceProps_AsAliasCacheSkip(t *testing.T) {
 	}
 }
 
-// TestProtocol_OnceProps_ExplicitPartialForcesRefresh verifies the v3 rule
-// that an explicit partial reload (X-Inertia-Partial-Data lists the key)
-// re-resolves a once prop even when the client also reports it cached via
-// X-Inertia-Except-Once-Props. The explicit request wins over the cache skip.
-func TestProtocol_OnceProps_ExplicitPartialForcesRefresh(t *testing.T) {
+// TestProtocol_OnceProps_PartialDataDoesNotForceRefresh verifies alignment with
+// the official PropsResolver: a once prop reported cached via
+// X-Inertia-Except-Once-Props is cache-skipped (value omitted) EVEN when the
+// client also lists it in X-Inertia-Partial-Data. Only .Fresh() forces a
+// re-resolve; explicit partial data does not. The onceProps metadata is still
+// emitted so the client keeps the cached value mapped.
+func TestProtocol_OnceProps_PartialDataDoesNotForceRefresh(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i.Render(w, r, "Billing", Props{
@@ -421,11 +423,88 @@ func TestProtocol_OnceProps_ExplicitPartialForcesRefresh(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := p.Props["plans"]; !ok {
-		t.Errorf("explicit Partial-Data must force re-resolve of once prop despite Except-Once-Props: %v", p.Props)
+	if _, ok := p.Props["plans"]; ok {
+		t.Errorf("once prop reported cached must be skipped even when in Partial-Data (no force-refresh): %v", p.Props)
 	}
 	if _, ok := p.OnceProps["plans"]; !ok {
-		t.Error("onceProps metadata must still be emitted on forced refresh")
+		t.Error("onceProps metadata must still be emitted on a cache-skipped once prop")
+	}
+}
+
+// TestProtocol_OnceProps_FreshForcesRefresh verifies that .Fresh() overrides the
+// cache skip: a Once(fn).Fresh() prop is re-resolved (present in props) even
+// when reported cached via X-Inertia-Except-Once-Props.
+func TestProtocol_OnceProps_FreshForcesRefresh(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i.Render(w, r, "Billing", Props{
+			"plans": Once(func() (any, error) { return []string{"basic", "pro"}, nil }).Fresh(),
+		})
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/billing", nil)
+	req.Header.Set("X-Inertia", "true")
+	req.Header.Set("X-Inertia-Partial-Component", "Billing")
+	req.Header.Set("X-Inertia-Partial-Data", "plans")
+	req.Header.Set("X-Inertia-Except-Once-Props", "plans")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var p PageObject
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.Props["plans"]; !ok {
+		t.Errorf("Fresh() once prop must re-resolve despite Except-Once-Props: %v", p.Props)
+	}
+	if _, ok := p.OnceProps["plans"]; !ok {
+		t.Error("onceProps metadata must still be emitted on a Fresh once prop")
+	}
+}
+
+// TestProtocol_OnceProps_NestedPathCacheSkip verifies the cache-skip key is the
+// full dot path, not the leaf key. A once prop at config.locale reported cached
+// via X-Inertia-Except-Once-Props: config.locale is skipped (value omitted),
+// and its onceProps[config.locale] metadata is still emitted.
+func TestProtocol_OnceProps_NestedPathCacheSkip(t *testing.T) {
+	i, _ := New(Config{Session: session.NewMemory()})
+	mk := func(except string) PageObject {
+		h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			i.Render(w, r, "Settings", Props{
+				"config": map[string]any{
+					"locale": Once(func() (any, error) { return "en", nil }),
+				},
+			})
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req.Header.Set("X-Inertia", "true")
+		if except != "" {
+			req.Header.Set("X-Inertia-Except-Once-Props", except)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var p PageObject
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	first := mk("")
+	cfg, _ := first.Props["config"].(map[string]any)
+	if cfg == nil || cfg["locale"] != "en" {
+		t.Errorf("first load must include config.locale: %v", first.Props)
+	}
+	if _, ok := first.OnceProps["config.locale"]; !ok {
+		t.Errorf("onceProps must be keyed by full path config.locale: %+v", first.OnceProps)
+	}
+	cached := mk("config.locale")
+	cfg2, _ := cached.Props["config"].(map[string]any)
+	if cfg2 != nil {
+		if _, ok := cfg2["locale"]; ok {
+			t.Errorf("nested once prop reported cached by full path must be skipped: %v", cfg2)
+		}
+	}
+	if _, ok := cached.OnceProps["config.locale"]; !ok {
+		t.Error("onceProps[config.locale] metadata must persist on cached response")
 	}
 }
 
