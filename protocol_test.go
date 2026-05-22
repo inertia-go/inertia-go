@@ -398,13 +398,13 @@ func TestProtocol_OnceProps_AsAliasCacheSkip(t *testing.T) {
 	}
 }
 
-// TestProtocol_OnceProps_PartialDataDoesNotForceRefresh verifies alignment with
-// the official PropsResolver: a once prop reported cached via
-// X-Inertia-Except-Once-Props is cache-skipped (value omitted) EVEN when the
-// client also lists it in X-Inertia-Partial-Data. Only .Fresh() forces a
-// re-resolve; explicit partial data does not. The onceProps metadata is still
-// emitted so the client keeps the cached value mapped.
-func TestProtocol_OnceProps_PartialDataDoesNotForceRefresh(t *testing.T) {
+// TestProtocol_OnceProps_PartialReloadResolvesAlreadyLoaded verifies alignment
+// with the official PropsResolver: the once cache-skip
+// (wasAlreadyLoadedByClient) is reachable only inside excludeFromInitialResponse,
+// which is gated on !isPartial. So on a PARTIAL reload an already-loaded once
+// prop is NOT cache-skipped — it is re-resolved and SENT. Its onceProps metadata
+// is still emitted.
+func TestProtocol_OnceProps_PartialReloadResolvesAlreadyLoaded(t *testing.T) {
 	i, _ := New(Config{Session: session.NewMemory()})
 	h := i.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		i.Render(w, r, "Billing", Props{
@@ -423,11 +423,11 @@ func TestProtocol_OnceProps_PartialDataDoesNotForceRefresh(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := p.Props["plans"]; ok {
-		t.Errorf("once prop reported cached must be skipped even when in Partial-Data (no force-refresh): %v", p.Props)
+	if _, ok := p.Props["plans"]; !ok {
+		t.Errorf("on a partial reload an already-loaded once prop must be re-resolved and sent: %v", p.Props)
 	}
 	if _, ok := p.OnceProps["plans"]; !ok {
-		t.Error("onceProps metadata must still be emitted on a cache-skipped once prop")
+		t.Error("onceProps metadata must still be emitted on a partial reload")
 	}
 }
 

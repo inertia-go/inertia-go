@@ -160,9 +160,12 @@ func (pr *propsResolver) resolveItem(prop any, path string, parentResolved bool)
 		return nil, false, nil
 	}
 	// A once prop the client already has cached (and isn't Fresh) still emits
-	// its metadata, but its value is skipped. Match the ordering: metadata
-	// first, then skip.
-	if pr.shouldSkipOnce(path, prop) {
+	// its metadata, but its value is skipped. The official cache-skip
+	// (wasAlreadyLoadedByClient) is reachable only inside
+	// excludeFromInitialResponse, which is gated on !isPartial — so this skip
+	// fires only on the initial (non-partial) response. On a partial reload an
+	// already-loaded once prop is re-resolved and sent.
+	if !pr.isPartial && pr.shouldSkipOnce(path, prop) {
 		pr.collectMetadata(path, prop)
 		return nil, false, nil
 	}
