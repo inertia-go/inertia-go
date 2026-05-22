@@ -243,6 +243,21 @@ func (pr *propsResolver) pathMatches(path string) bool {
 	return true
 }
 
+// includedInPartialMetadata reports whether a path is eligible to contribute
+// merge/once metadata on a partial reload. Mirrors the official
+// isIncludedInPartialMetadata: it uses matchesOnly (matchesPath) ONLY — NOT
+// leadsToPath — so an ancestor path traversed solely to reach a requested leaf
+// does not surface its own merge/once metadata.
+func (pr *propsResolver) includedInPartialMetadata(path string) bool {
+	if pr.only != nil && !matchesPath(pr.only, path) {
+		return false
+	}
+	if pr.except != nil && matchesPath(pr.except, path) {
+		return false
+	}
+	return true
+}
+
 // excludeFromInitial drops Optional and Deferred props from the initial
 // (non-partial) response. Before discarding the value it collects the metadata
 // the client needs for the deferred follow-up: deferred-group membership (for
@@ -334,6 +349,9 @@ func (pr *propsResolver) collectMergeMetadata(path string, b *propBuilder) {
 	if pr.reset[path] {
 		return
 	}
+	if pr.isPartial && !pr.includedInPartialMetadata(path) {
+		return
+	}
 	nested := len(b.prependPath) > 0 || len(b.appendPath) > 0
 	if b.merge && !nested {
 		pr.markers.mergeKeys = append(pr.markers.mergeKeys, path)
@@ -358,6 +376,9 @@ func (pr *propsResolver) collectMergeMetadata(path string, b *propBuilder) {
 // (or full dot path). Shared by collectMetadata and excludeFromInitial.
 func (pr *propsResolver) collectOnceMetadata(path string, b *propBuilder) {
 	if !b.once {
+		return
+	}
+	if pr.isPartial && !pr.includedInPartialMetadata(path) {
 		return
 	}
 	onceKey := path

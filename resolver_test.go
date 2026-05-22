@@ -393,3 +393,73 @@ func TestResolve_ArrayScalarsPreserved(t *testing.T) {
 		t.Errorf("scalar array must be preserved in order: %#v", out["nums"])
 	}
 }
+
+// TestResolve_PartialMetadataFiltersAncestorMerge verifies FIX #4: on a partial
+// reload, a Merge at an ancestor path that is only traversed (via leadsToPath)
+// to reach a requested leaf must NOT contribute merge metadata, because the
+// official isIncludedInPartialMetadata uses matchesOnly only (NOT leadsToOnly).
+// "auth" is itself a Merge whose closure returns a nested map; with
+// only=["auth.user"] it is traversed to reach auth.user, so its VALUE is
+// resolved, but it must NOT emit "auth" in mergeProps. With only=["auth"] it
+// matchesOnly, so it DOES emit mergeProps.
+func TestResolve_PartialMetadataFiltersAncestorMerge(t *testing.T) {
+	run := func(only []string) (map[string]any, []string) {
+		pr := &propsResolver{
+			isPartial: true,
+			only:      only,
+			markers:   newMarkers(),
+		}
+		out, err := pr.resolve(Props{
+			"auth": Merge(func() (any, error) {
+				return map[string]any{"user": "x", "role": "admin"}, nil
+			}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, pr.markers.mergeKeys
+	}
+
+	out, mergeKeys := run([]string{"auth.user"})
+	auth, _ := out["auth"].(map[string]any)
+	if auth == nil || auth["user"] != "x" {
+		t.Errorf("auth.user must be resolved via ancestor traversal: %v", out)
+	}
+	if hasKey(mergeKeys, "auth") {
+		t.Errorf("ancestor-traversed-only Merge must NOT emit mergeProps: %v", mergeKeys)
+	}
+
+	_, mergeKeys2 := run([]string{"auth"})
+	if !hasKey(mergeKeys2, "auth") {
+		t.Errorf("matchesOnly Merge must emit mergeProps for only=[auth]: %v", mergeKeys2)
+	}
+}
+
+// TestResolve_PartialMetadataFiltersAncestorOnce verifies the same partial
+// filter applies to once metadata: an ancestor Once traversed only via
+// leadsToPath must NOT emit onceProps, but a matchesOnly Once does.
+func TestResolve_PartialMetadataFiltersAncestorOnce(t *testing.T) {
+	run := func(only []string) map[string]OnceConfig {
+		pr := &propsResolver{
+			isPartial: true,
+			only:      only,
+			markers:   newMarkers(),
+		}
+		_, err := pr.resolve(Props{
+			"auth": Once(func() (any, error) {
+				return map[string]any{"user": "x"}, nil
+			}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pr.markers.onceProps
+	}
+
+	if _, ok := run([]string{"auth.user"})["auth"]; ok {
+		t.Errorf("ancestor-traversed-only Once must NOT emit onceProps: %v", run([]string{"auth.user"}))
+	}
+	if _, ok := run([]string{"auth"})["auth"]; !ok {
+		t.Errorf("matchesOnly Once must emit onceProps for only=[auth]: %v", run([]string{"auth"}))
+	}
+}
