@@ -196,34 +196,35 @@ func (pr *propsResolver) resolveItem(prop any, path string, parentResolved bool)
 
 	pr.collectMetadata(path, prop)
 
-	childResolved := parentResolved || isClosureProp(prop)
 	// Scroll values nest under their wrapper; do not recurse into them.
 	if sp, ok := prop.(*scrollProp); ok {
-		val = map[string]any{sp.wrapper: val}
-	} else if m, ok := val.(map[string]any); ok {
-		child, err := pr.resolveProps(m, path, childResolved)
-		if err != nil {
-			return nil, false, err
-		}
-		val = child
-	} else if arr, ok := val.([]any); ok {
-		child, err := pr.resolveArray(arr, path, childResolved)
-		if err != nil {
-			return nil, false, err
-		}
-		val = child
-	} else if maps, ok := val.([]map[string]any); ok {
-		norm := make([]any, len(maps))
-		for i := range maps {
-			norm[i] = maps[i]
-		}
-		child, err := pr.resolveArray(norm, path, childResolved)
-		if err != nil {
-			return nil, false, err
-		}
-		val = child
+		return map[string]any{sp.wrapper: val}, true, nil
+	}
+	val, err = pr.recurseInto(val, path, parentResolved || isClosureProp(prop))
+	if err != nil {
+		return nil, false, err
 	}
 	return val, true, nil
+}
+
+// recurseInto descends into a resolved value when it is itself a map or an
+// indexed array, matching the official is_array recursion. []map[string]any is
+// normalized to []any first. Scalars and other types pass through unchanged.
+func (pr *propsResolver) recurseInto(val any, path string, childResolved bool) (any, error) {
+	switch v := val.(type) {
+	case map[string]any:
+		return pr.resolveProps(v, path, childResolved)
+	case []any:
+		return pr.resolveArray(v, path, childResolved)
+	case []map[string]any:
+		norm := make([]any, len(v))
+		for i := range v {
+			norm[i] = v[i]
+		}
+		return pr.resolveArray(norm, path, childResolved)
+	default:
+		return val, nil
+	}
 }
 
 func (pr *propsResolver) shouldInclude(path string, prop any, parentResolved bool) bool {
